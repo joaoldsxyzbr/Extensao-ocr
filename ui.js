@@ -45,12 +45,26 @@ function status(texto, ok = false) {
 function limparStatus() { elStatus.classList.add('oculto'); }
 
 /* ---------- Worker OCR ---------- */
-async function origemVendor() {
+/* Preferências em vendor/origem.json:
+   core: "auto" (detecta arquivo local) | "local" | "cdn"
+   lang:  "auto" (usa o b64 embutido no repo) | "cdn"  */
+async function resolverCaminhos() {
+  let pref = {};
   try {
     const r = await fetch(BASE + 'vendor/origem.json');
-    if (r.ok) return await r.json();
-  } catch (e) { /* sem origem.json → tenta local */ }
-  return { core: 'local', lang: 'local-b64' };
+    if (r.ok) pref = await r.json();
+  } catch (e) { /* sem origem.json → auto */ }
+
+  let core = 'cdn';
+  if (pref.core === 'local') core = 'local';
+  else if (!pref.core || pref.core === 'auto') {
+    const existe = await fetch(BASE + 'vendor/tesseract-core-simd-lstm.wasm.js', { method: 'HEAD' })
+      .then((r) => r.ok).catch(() => false);
+    if (existe) core = 'local';
+  }
+
+  const lang = pref.lang === 'cdn' ? 'cdn' : 'local-b64';
+  return { core, lang };
 }
 
 /* IndexedDB no formato do idb-keyval (db 'keyval', store 'keyval') —
@@ -103,7 +117,7 @@ async function garantirIdioma(o) {
 async function obterWorker() {
   if (!workerPronto) {
     workerPronto = (async () => {
-      const o = await origemVendor();
+      const o = await resolverCaminhos();
       await garantirIdioma(o);
       const opcoes = {
         workerPath: BASE + 'vendor/worker.min.js',
@@ -192,7 +206,7 @@ async function processarFila() {
   let worker;
   try { worker = await obterWorker(); }
   catch (e) {
-    toast('Falha ao iniciar o OCR: ' + e.message, false);
+    toast('Falha ao iniciar o OCR (' + (e.message || e) + '). Se persistir, rode tools/instalar-offline para usar tudo local.', false);
     fila.length = 0;
     processando = false;
     limparStatus();
