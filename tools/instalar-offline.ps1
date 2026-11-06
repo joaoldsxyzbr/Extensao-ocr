@@ -13,8 +13,5 @@ Invoke-WebRequest "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.m
 Write-Host "Baixando core LSTM (SIMD)…"
 Invoke-WebRequest "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js" -OutFile vendor\tesseract-core-simd-lstm.wasm.js
 
-Write-Host "Baixando modelo do idioma (por, fast)…"
-Invoke-WebRequest "https://tessdata.projectnaptha.com/4.0.0_fast/por.traineddata.gz" -OutFile vendor\langs\por.traineddata.gz
-
 Set-Content vendor\origem.json '{"core": "local", "lang": "local"}'
-Write-Host "Pronto: vendor completo, extensão 100% offline."
+Write-Host "Pronto: core local instalado — extensão 100% offline."
