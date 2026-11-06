@@ -1,0 +1,1 @@
+{"core": "local", "lang": "local-b64", "nota": "core: local|cdn (vendor/tesseract-core-simd-lstm.wasm.js); lang: local-b64 (vendor/langs/por.traineddata.gz.b64 via cache IndexedDB) | cdn (tessdata.projectnaptha.com). Fallback: tools/instalar-offline"}
