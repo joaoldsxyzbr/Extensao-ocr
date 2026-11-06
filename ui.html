@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Extrator de Produtos (OCR)</title>
+  <link rel="stylesheet" href="ui.css" />
+</head>
+<body>
+  <header>
+    <h1>📦 Extrator de Produtos <span class="tag">OCR local</span></h1>
+    <p class="sub">Cole (Ctrl+V), arraste ou escolha prints. O OCR roda no seu navegador — a imagem não sai da máquina.</p>
+  </header>
+
+  <section id="zona" class="zona">
+    <input type="file" id="arquivos" accept="image/*" multiple hidden />
+    <div class="zona-conteudo">
+      <div class="icone">🖼️</div>
+      <p><strong>Cole, arraste ou clique</strong> para escolher os prints</p>
+      <p class="dica">Dica: em qualquer site, clique com o botão direito na imagem → "Extrair produtos deste print (OCR)".</p>
+    </div>
+  </section>
+
+  <section id="status" class="status oculto">
+    <span id="status-texto"></span>
+  </section>
+
+  <section id="miniaturas" class="miniaturas"></section>
+
+  <section class="painel">
+    <div class="painel-topo">
+      <h2>Itens extraídos <span id="n-itens" class="conta"></span></h2>
+      <div class="acoes">
+        <button id="copiar-atual" class="primario">Copiar lista</button>
+        <button id="salvar" class="secundario">Salvar na lista</button>
+        <button id="limpar-atual" class="secundario">Limpar itens</button>
+      </div>
+    </div>
+    <div id="resultados" class="resultados">
+      <p class="vazio">Nada ainda — mande um print. 📋</p>
+    </div>
+  </section>
+
+  <section class="painel">
+    <div class="painel-topo">
+      <h2>Lista salva <span id="n-salvos" class="conta"></span></h2>
+      <div class="acoes">
+        <button id="copiar-salvos" class="primario">Copiar lista salva</button>
+        <button id="limpar-salvos" class="secundario">Limpar salva</button>
+      </div>
+    </div>
+    <div id="lista-salva" class="resultados">
+      <p class="vazio">A lista salva fica entre sessões — use "Salvar na lista" nos itens extraídos.</p>
+    </div>
+  </section>
+
+  <details id="bruto" class="bruto oculto">
+    <summary>Texto OCR bruto (para conferir erros de leitura)</summary>
+    <textarea id="texto-bruto" readonly rows="10"></textarea>
+  </details>
+
+  <div id="toast" class="toast oculto"></div>
+
+  <script src="vendor/tesseract.min.js"></script>
+  <script src="parser.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
