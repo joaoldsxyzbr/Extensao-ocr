@@ -13,8 +13,5 @@ curl -sL https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js -o v
 echo "Baixando core LSTM (SIMD)…"
 curl -sL https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js -o vendor/tesseract-core-simd-lstm.wasm.js
 
-echo "Baixando modelo do idioma (por, fast)…"
-curl -sL https://tessdata.projectnaptha.com/4.0.0_fast/por.traineddata.gz -o vendor/langs/por.traineddata.gz
-
 echo '{"core": "local", "lang": "local"}' > vendor/origem.json
-echo "Pronto: vendor completo, extensão 100% offline."
+echo "Pronto: core local instalado — extensão 100% offline."
