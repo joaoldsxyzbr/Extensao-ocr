@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const zona = $('zona'), inputArquivos = $('arquivos');
 const elStatus = $('status'), elContagem = $('contagem'), elResultados = $('resultados');
+const elMiniaturas = $('miniaturas');
 
 let itens = [];            // { codigo, descricao, marcado }
 let fila = [];
@@ -36,6 +37,10 @@ async function enfileirar(arquivos) {
   for (const f of arquivos) {
     if (!f.type.startsWith('image/')) continue;
     fila.push(f);
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(f);
+    img.title = f.name || 'print';
+    elMiniaturas.appendChild(img);
   }
   if (fila.length) await processarFila();
 }
@@ -123,6 +128,7 @@ $('salvar').onclick = async () => {
 $('limpar').onclick = () => {
   itens = [];
   renderizar();
+  elMiniaturas.innerHTML = '';
   elStatus.classList.add('oculto');
 };
 
@@ -135,6 +141,7 @@ $('abrir').onclick = async () => {
 zona.addEventListener('click', () => inputArquivos.click());
 inputArquivos.addEventListener('change', () => { enfileirar([...inputArquivos.files]); inputArquivos.value = ''; });
 
+// Ctrl+V com o popup aberto
 document.addEventListener('paste', (e) => {
   const files = [...(e.clipboardData?.items || [])]
     .filter(i => i.kind === 'file')
@@ -142,6 +149,25 @@ document.addEventListener('paste', (e) => {
     .filter(Boolean);
   if (files.length) enfileirar(files);
 });
+
+// Botão "Colar": lê a imagem direto da área de transferência (print sem salvar em pasta)
+$('colar').onclick = async () => {
+  try {
+    const itensArea = await navigator.clipboard.read();
+    for (const item of itensArea) {
+      const tipo = item.types.find(t => t.startsWith('image/'));
+      if (tipo) {
+        const blob = await item.getType(tipo);
+        const arquivo = new File([blob], 'print.png', { type: tipo });
+        await enfileirar([arquivo]);
+        return;
+      }
+    }
+    status('A área de transferência não tem imagem. Tire o print (Win+Shift+S) e clique aqui de novo.', false);
+  } catch (e) {
+    status('Não consegui ler a área de transferência — use Ctrl+V aqui ou escolha o arquivo.', false);
+  }
+};
 
 renderizar();
 atualizarContagem();
