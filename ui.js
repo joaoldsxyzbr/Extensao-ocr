@@ -94,7 +94,7 @@ async function garantirIdioma(o) {
   const r = await fetch(BASE + 'vendor/langs/por.traineddata.gz.b64');
   if (!r.ok) throw new Error('vendor/langs/por.traineddata.gz.b64 não encontrado (rode tools/instalar-offline)');
   const b64 = (await r.text()).trim();
-  const bin = atob(b64);
+  const bin = atob(b64.replace(/\s+/g, ""));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   await idbSet('./por.traineddata', bytes);
