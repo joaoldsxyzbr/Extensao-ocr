@@ -6,12 +6,15 @@
     body { font-family: system-ui, sans-serif; width: 360px; margin: 0; padding: 12px; background: #17181d; color: #e8e8ea; }
     h1 { font-size: 14px; margin: 0 0 10px; }
     .zona {
-      border: 2px dashed #3f424c; border-radius: 12px; padding: 16px 12px;
-      text-align: center; cursor: pointer; background: #1d1f25; margin-bottom: 10px;
+      border: 2px dashed #3f424c; border-radius: 12px; padding: 18px 12px;
+      text-align: center; cursor: pointer; background: #1d1f25; margin-bottom: 8px;
       transition: all .15s; font-size: 13px;
     }
     .zona:hover { border-color: #2563eb; }
+    .zona .icone { font-size: 26px; }
     .zona .dica { color: #7c808b; font-size: 11px; display: block; margin-top: 4px; }
+    .miniaturas { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .miniaturas img { height: 48px; border-radius: 6px; border: 1px solid #3f424c; }
     .contagem { font-size: 11px; color: #a0a3ad; margin-bottom: 8px; }
     .status { background: #1e3a8a; border-radius: 8px; padding: 7px 10px; font-size: 12px; margin-bottom: 8px; }
     .status.ok { background: #064e3b; }
@@ -32,6 +35,7 @@
     .acoes { display: flex; gap: 6px; margin-top: 10px; }
     .acoes button { flex: 1; }
     button.primario { background: #2563eb; color: #fff; font-weight: 600; }
+    button.colar { display: block; width: 100%; margin-bottom: 8px; padding: 9px 10px; font-size: 13px; background: #2563eb; color: #fff; font-weight: 600; }
     button.abrir { display: block; width: 100%; margin-top: 8px; background: #1d1f25; color: #7c808b; }
     .oculto { display: none; }
   </style>
@@ -40,11 +44,15 @@
   <h1>📦 Extrator de Produtos <span style="font-size:10px;color:#6ee7b7">OCR local</span></h1>
 
   <div class="zona" id="zona">
-    🖼️ <strong>Cole o print aqui (Ctrl+V)</strong>
-    <span class="dica">ou clique para escolher o arquivo</span>
+    <span class="icone">🖼️</span>
+    <strong>Cole o print aqui (Ctrl+V)</strong>
+    <span class="dica">ou clique para escolher um arquivo da pasta</span>
   </div>
   <input type="file" id="arquivos" accept="image/*" multiple hidden />
 
+  <button class="colar" id="colar">📋 Colar print da área de transferência</button>
+
+  <div class="miniaturas" id="miniaturas"></div>
   <div class="status oculto" id="status"></div>
   <div class="contagem" id="contagem"></div>
   <div id="resultados"></div>
