@@ -62,13 +62,29 @@ repo não carrega PNGs binários. Se quiser ícones "de arquivo", rode
 `python3 tools/gerar-icones.py` (gera `icons/`) e adicione de volta a seção
 `"icons"` no `manifest.json`.
 
-## Modo fallback (CDN)
+## OCR: o que é local e o que é baixado
 
-Se os arquivos grandes do `vendor/` não estiverem presentes, mude
-`vendor/origem.json` para `{"core": "cdn", "lang": "cdn"}`: o engine e o modelo
-passam a vir de CDN (a imagem continua **local**; só o modelo é baixado).
-O `tools/instalar-offline.sh` (Linux/Mac) ou `tools/instalar-offline.ps1` (Windows)
-baixa os arquivos do vendor para voltar ao modo 100% offline.
+| Componente | De onde vem | Offline? |
+|---|---|---|
+| Engine Tesseract (tesseract.min.js, worker.min.js) | embutido no repo | ✅ sempre |
+| Modelo do idioma `por` (b64) | embutido no repo → cache IndexedDB | ✅ sempre |
+| Core LSTM (wasm, ~4 MB) | CDN por padrão; arquivo local se instalar | 🌐 / ✅ |
+
+**A imagem do print nunca sai do navegador** — só os arquivos do modelo (públicos)
+podem ser baixados. O core via CDN fica no cache HTTP do navegador após o
+primeiro uso.
+
+### 100% offline (recomendado)
+
+```bash
+bash tools/instalar-offline.sh      # Linux/Mac
+# ou
+powershell -ExecutionPolicy Bypass -File tools\instalar-offline.ps1   # Windows
+```
+
+Isso baixa o core para `vendor/` e grava `vendor/origem.json` com
+`{"core": "local"}` — a extensão detecta e passa a usar só arquivos locais.
+Se o OCR não iniciar com o core via CDN (CSP de rede), rode o script acima.
 
 ## Testes
 
