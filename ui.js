@@ -1,19 +1,6 @@
-/* ui.js — extrator: recebe prints, roda OCR local e monta os itens no padrão. */
+/* ui.js — extrator: recebe prints, roda OCR local e monta os itens no padrão.
+   O motor OCR fica em ocr-comum.js (compartilhado com o popup). */
 
-const BASE = chrome.runtime.getURL('');
-const CDN_CORE = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v7.0.0';
-const CDN_LANG = 'https://tessdata.projectnaptha.com/4.0.0_fast';
-
-const STATUS_PT = {
-  'loading tesseract core': 'Carregando engine OCR…',
-  'initializing tesseract': 'Inicializando…',
-  'loading language traineddata': 'Carregando modelo do idioma…',
-  'loading language traineddata (from cache)': 'Carregando modelo do idioma…',
-  'initializing api': 'Preparando reconhecimento…',
-  'recognizing text': 'Lendo o print…',
-};
-
-let workerPronto = null;
 let itensAtuais = [];
 let itensSalvos = [];
 
@@ -44,145 +31,8 @@ function status(texto, ok = false) {
 
 function limparStatus() { elStatus.classList.add('oculto'); }
 
-/* ---------- Worker OCR ---------- */
-/* Preferências em vendor/origem.json:
-   core: "auto" (detecta arquivo local) | "local" | "cdn"
-   lang:  "auto" (usa o b64 embutido no repo) | "cdn"  */
-async function resolverCaminhos() {
-  let pref = {};
-  try {
-    const r = await fetch(BASE + 'vendor/origem.json');
-    if (r.ok) pref = await r.json();
-  } catch (e) { /* sem origem.json → auto */ }
-
-  let core = 'cdn';
-  if (pref.core === 'local') core = 'local';
-  else if (!pref.core || pref.core === 'auto') {
-    const existe = await fetch(BASE + 'vendor/tesseract-core-simd-lstm.wasm.js', { method: 'HEAD' })
-      .then((r) => r.ok).catch(() => false);
-    if (existe) core = 'local';
-  }
-
-  const lang = pref.lang === 'cdn' ? 'cdn' : 'local-b64';
-  return { core, lang };
-}
-
-/* IndexedDB no formato do idb-keyval (db 'keyval', store 'keyval') —
-   é o cache oficial do tesseract.js para o .traineddata. */
-function idbGet(chave) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('keyval', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('keyval');
-    req.onsuccess = () => {
-      const db = req.result;
-      const tx = db.transaction('keyval', 'readonly');
-      const get = tx.objectStore('keyval').get(chave);
-      get.onsuccess = () => { db.close(); resolve(get.result); };
-      get.onerror = () => { db.close(); reject(get.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function idbSet(chave, valor) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('keyval', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('keyval');
-    req.onsuccess = () => {
-      const db = req.result;
-      const tx = db.transaction('keyval', 'readwrite');
-      tx.objectStore('keyval').put(valor, chave);
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = () => { db.close(); reject(tx.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/* 'local-b64': o modelo 'por' vem embutido como base64 (arquivo de texto no
-   repo); decodifica uma vez e grava no cache IndexedDB do tesseract. */
-async function garantirIdioma(o) {
-  if (o.lang !== 'local-b64') return;
-  const jaTem = await idbGet('./por.traineddata').catch(() => undefined);
-  if (jaTem && jaTem.length) return;
-  const r = await fetch(BASE + 'vendor/langs/por.traineddata.gz.b64');
-  if (!r.ok) throw new Error('vendor/langs/por.traineddata.gz.b64 não encontrado (rode tools/instalar-offline)');
-  const b64 = (await r.text()).trim();
-  const bin = atob(b64.replace(/\s+/g, ""));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  await idbSet('./por.traineddata', bytes);
-}
-
-async function obterWorker() {
-  if (!workerPronto) {
-    workerPronto = (async () => {
-      const o = await resolverCaminhos();
-      await garantirIdioma(o);
-      const opcoes = {
-        workerPath: BASE + 'vendor/worker.min.js',
-        workerBlobURL: false,
-        gzip: true,
-        logger: (m) => {
-          const texto = STATUS_PT[m.status] || m.status;
-          const pct = m.status === 'recognizing text' ? ` ${Math.round((m.progress || 0) * 100)}%` : '';
-          status(texto + pct);
-        },
-      };
-      if (o.core === 'local') opcoes.corePath = BASE + 'vendor/tesseract-core-simd-lstm.wasm.js';
-      else opcoes.corePath = CDN_CORE;
-
-      /* Idioma:
-         - local-b64: já está no IndexedDB (garantirIdioma); langPath CDN é só
-           rede de segurança caso o cache seja apagado.
-         - cdn: baixa do CDN (a imagem continua local). */
-      opcoes.langPath = CDN_LANG;
-      if (o.lang === 'cdn') opcoes.cacheMethod = 'refresh';
-
-      return Tesseract.createWorker('por', Tesseract.OEM.LSTM_ONLY, opcoes);
-    })().catch((e) => { workerPronto = null; throw e; });
-  }
-  return workerPronto;
-}
-
-/* ---------- Pré-processamento (escala de cinza + contraste + upscale) ---------- */
-async function prepararImagem(arquivo) {
-  const bitmap = await createImageBitmap(arquivo);
-  const menor = Math.min(bitmap.width, bitmap.height);
-  const fator = Math.min(3, Math.max(1, 1100 / menor));
-  const w = Math.round(bitmap.width * fator), h = Math.round(bitmap.height * fator);
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
-  const n = w * h;
-  const cinza = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    const j = i * 4;
-    cinza[i] = (d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114) | 0;
-  }
-  // Contraste: estica para os percentis 2%–98%.
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < n; i++) hist[cinza[i]]++;
-  let acum = 0, pMin = 0, pMax = 255;
-  for (let v = 0; v < 256; v++) { acum += hist[v]; if (acum >= n * 0.02) { pMin = v; break; } }
-  acum = 0;
-  for (let v = 255; v >= 0; v--) { acum += hist[v]; if (acum >= n * 0.02) { pMax = v; break; } }
-  const span = Math.max(1, pMax - pMin);
-  for (let i = 0; i < n; i++) {
-    const g = Math.max(0, Math.min(255, ((cinza[i] - pMin) * 255 / span) | 0));
-    const j = i * 4;
-    d[j] = d[j + 1] = d[j + 2] = g;
-  }
-  ctx.putImageData(img, 0, 0);
-  return canvas.toDataURL('image/png');
-}
+/* Progresso do OCR (worker) vai pro status da página. */
+OCRComum.setLogger(status);
 
 /* ---------- Fila de processamento ---------- */
 const fila = [];
@@ -203,34 +53,25 @@ async function enfileirar(arquivos) {
 async function processarFila() {
   if (processando) return;
   processando = true;
-  let worker;
-  try { worker = await obterWorker(); }
-  catch (e) {
-    toast('Falha ao iniciar o OCR (' + (e.message || e) + '). Se persistir, rode tools/instalar-offline para usar tudo local.', false);
-    fila.length = 0;
-    processando = false;
-    limparStatus();
-    return;
-  }
   while (fila.length) {
     const arquivo = fila.shift();
     try {
-      const dataUrl = await prepararImagem(arquivo);
-      const { data } = await worker.recognize(dataUrl);
-      const itens = ParserProdutos.extrairProdutos(data.text);
+      const { itens, texto, confianca } = await OCRComum.extrairDeArquivo(arquivo);
       for (const it of itens) itensAtuais.push({ ...it, marcado: true });
       renderizarResultados();
       elBruto.classList.remove('oculto');
       elTextoBruto.value += (elTextoBruto.value ? '\n\n' : '') +
-        `--- ${arquivo.name || 'print'} (confiança ${data.confidence}) ---\n` + data.text;
+        `--- ${arquivo.name || 'print'} (confiança ${confianca}) ---\n` + texto;
       if (!itens.length) toast('Nenhum produto reconhecido nesse print — confira o texto bruto.', false);
     } catch (e) {
-      toast('Erro ao processar a imagem: ' + (e.message || e), false);
+      toast('Falha no OCR (' + (e.message || e) + '). Se persistir, rode tools/instalar-offline para usar tudo local.', false);
+      fila.length = 0;
+      break;
     }
   }
   processando = false;
   limparStatus();
-  toast('Pronto! Itens extraídos no padrão. ✅');
+  if (itensAtuais.length) toast('Pronto! Itens extraídos no padrão. ✅');
 }
 
 /* ---------- Renderização ---------- */
