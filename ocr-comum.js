@@ -35,16 +35,16 @@ const OCRComum = (function () {
       if (r.ok) pref = await r.json();
     } catch (e) { /* sem origem.json → auto */ }
 
-    let core = 'cdn';
-    if (pref.core === 'local') core = 'local';
-    else if (!pref.core || pref.core === 'auto') {
+    let core = pref.core === 'local' ? 'local' : (pref.core === 'cdn' ? 'cdn' : 'auto');
+    let coreAuto = core === 'auto';
+    if (coreAuto) {
       const existe = await fetch(BASE + 'vendor/tesseract-core-simd-lstm.wasm.js', { method: 'HEAD' })
         .then((r) => r.ok).catch(() => false);
-      if (existe) core = 'local';
+      core = existe ? 'local' : 'cdn';
     }
 
     const lang = pref.lang === 'cdn' ? 'cdn' : 'local-b64';
-    return { core, lang };
+    return { core, coreAuto };
   }
 
   /* IndexedDB no formato do idb-keyval (db 'keyval', store 'keyval') —
@@ -98,6 +98,16 @@ const OCRComum = (function () {
     if (!workerPronto) {
       workerPronto = (async () => {
         const o = await resolverCaminhos();
+        /* O Chrome (MV3) bloqueia importScripts de CDN no worker da extensão
+           (CSP script-src 'self'). Sem o core na pasta vendor/, o OCR não roda —
+           avisa com instrução prática em vez de estourar erro críptico de rede. */
+        if (o.coreAuto && o.core === 'cdn') {
+          throw new Error(
+            'core do OCR não está na pasta vendor/. O Chrome não permite carregar por CDN. ' +
+            'Rode tools/instalar-offline.ps1 (Windows) ou bash tools/instalar-offline.sh ' +
+            'e atualize a extensão em chrome://extensions.'
+          );
+        }
         await garantirIdioma(o);
         const opcoes = {
           workerPath: BASE + 'vendor/worker.min.js',
