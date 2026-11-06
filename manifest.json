@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Extrator de Produtos (OCR)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Extrai código + descrição de produtos de prints com OCR 100% local (Tesseract LSTM) e monta no padrão 'CÓDIGO DESCRIÇÃO UN'.",
-  "permissions": ["storage", "activeTab", "contextMenus", "clipboardWrite"],
+  "permissions": ["storage", "activeTab", "contextMenus", "clipboardWrite", "clipboardRead"],
   "host_permissions": [
     "https://cdn.jsdelivr.net/*",
     "https://tessdata.projectnaptha.com/*"
