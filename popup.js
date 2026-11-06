@@ -1,40 +1,147 @@
-/* popup.js — painel rápido: contagem da lista salva e atalhos. */
+/* popup.js — extrator rápido no popup: cola o print, OCR roda e copia a linha. */
 
-const elContagem = document.getElementById('contagem');
-const btnAbrir = document.getElementById('abrir');
-const btnCopiar = document.getElementById('copiar');
-const btnLimpar = document.getElementById('limpar');
+const $ = (id) => document.getElementById(id);
+const zona = $('zona'), inputArquivos = $('arquivos');
+const elStatus = $('status'), elContagem = $('contagem'), elResultados = $('resultados');
 
-async function obterItens() {
-  const { itens = [] } = await chrome.storage.local.get('itens');
-  return itens;
+let itens = [];            // { codigo, descricao, marcado }
+let fila = [];
+let processando = false;
+
+OCRComum.setLogger((texto) => status(texto));
+
+function status(texto, ok = false) {
+  elStatus.classList.remove('oculto');
+  elStatus.classList.toggle('ok', ok);
+  elStatus.textContent = texto;
 }
 
-async function atualizar() {
-  const itens = await obterItens();
-  elContagem.textContent = itens.length
-    ? itens.length + (itens.length === 1 ? ' produto na lista salva' : ' produtos na lista salva')
+function toastNoStatus(msg) { status(msg, true); }
+
+/* ---------- lista salva ---------- */
+async function obterSalvos() {
+  const { itens: salvos = [] } = await chrome.storage.local.get('itens');
+  return salvos;
+}
+
+async function atualizarContagem() {
+  const salvos = await obterSalvos();
+  elContagem.textContent = salvos.length
+    ? `📂 ${salvos.length} na lista salva (copie pelo botão "Abrir extrator completo")`
     : '';
-  btnCopiar.style.display = itens.length ? 'block' : 'none';
-  btnLimpar.style.display = itens.length ? 'block' : 'none';
 }
 
-btnAbrir.addEventListener('click', async () => {
+/* ---------- processamento ---------- */
+async function enfileirar(arquivos) {
+  for (const f of arquivos) {
+    if (!f.type.startsWith('image/')) continue;
+    fila.push(f);
+  }
+  if (fila.length) await processarFila();
+}
+
+async function processarFila() {
+  if (processando) return;
+  processando = true;
+  while (fila.length) {
+    const arquivo = fila.shift();
+    try {
+      const { itens: novos, confianca } = await OCRComum.extrairDeArquivo(arquivo);
+      for (const it of novos) itens.push({ ...it, marcado: true });
+      renderizar();
+      if (!novos.length) status('Nenhum produto reconhecido — use o extrator completo pra ver o texto bruto.', false);
+      else toastNoStatus(`✅ ${novos.length} item(ns) lidos (confiança ${confianca}).`);
+    } catch (e) {
+      status('Falha no OCR: ' + (e.message || e) + '. Se persistir, rode tools/instalar-offline.', false);
+    }
+  }
+  processando = false;
+}
+
+/* ---------- renderização ---------- */
+function renderizar() {
+  elResultados.innerHTML = '';
+  if (!itens.length) {
+    elResultados.innerHTML = '<p class="vazio">Cole um print acima 👆</p>';
+    return;
+  }
+  itens.forEach((it, idx) => {
+    const div = document.createElement('div');
+    div.className = 'item';
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = it.marcado;
+    chk.onchange = () => { itens[idx].marcado = chk.checked; };
+
+    const inpCod = document.createElement('input');
+    inpCod.className = 'codigo';
+    inpCod.value = it.codigo;
+    inpCod.spellcheck = false;
+    inpCod.oninput = () => { itens[idx].codigo = inpCod.value; };
+
+    const inpDesc = document.createElement('input');
+    inpDesc.className = 'descricao';
+    inpDesc.value = it.descricao;
+    inpDesc.spellcheck = false;
+    inpDesc.oninput = () => { itens[idx].descricao = inpDesc.value; };
+
+    const btnRemover = document.createElement('button');
+    btnRemover.textContent = '✕';
+    btnRemover.title = 'Remover';
+    btnRemover.onclick = () => { itens.splice(idx, 1); renderizar(); };
+
+    div.append(chk, inpCod, inpDesc, btnRemover);
+    elResultados.appendChild(div);
+  });
+}
+
+/* ---------- ações ---------- */
+function linhasMarcadas() {
+  return itens.filter(i => i.marcado).map(i => `${i.codigo} ${i.descricao}`);
+}
+
+$('copiar').onclick = async () => {
+  const linhas = linhasMarcadas();
+  if (!linhas.length) return status('Nenhum item marcado.', false);
+  await navigator.clipboard.writeText(linhas.join('\n'));
+  status(`✅ ${linhas.length} linha(s) copiada(s)!`, true);
+};
+
+$('salvar').onclick = async () => {
+  const linhas = itens.filter(i => i.marcado).map(i => ({ linha: `${i.codigo} ${i.descricao}` }));
+  if (!linhas.length) return status('Nenhum item marcado.', false);
+  const salvos = await obterSalvos();
+  const vistos = new Set(salvos.map(i => i.linha));
+  let novos = 0;
+  for (const l of linhas) if (!vistos.has(l.linha)) { salvos.push(l); vistos.add(l.linha); novos++; }
+  await chrome.storage.local.set({ itens: salvos });
+  atualizarContagem();
+  status(novos ? `✅ ${novos} salvo(s) na lista.` : 'Todos já estavam salvos.', true);
+};
+
+$('limpar').onclick = () => {
+  itens = [];
+  renderizar();
+  elStatus.classList.add('oculto');
+};
+
+$('abrir').onclick = async () => {
   await chrome.tabs.create({ url: chrome.runtime.getURL('ui.html') });
   window.close();
+};
+
+/* ---------- entrada ---------- */
+zona.addEventListener('click', () => inputArquivos.click());
+inputArquivos.addEventListener('change', () => { enfileirar([...inputArquivos.files]); inputArquivos.value = ''; });
+
+document.addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.items || [])]
+    .filter(i => i.kind === 'file')
+    .map(i => i.getAsFile())
+    .filter(Boolean);
+  if (files.length) enfileirar(files);
 });
 
-btnCopiar.addEventListener('click', async () => {
-  const itens = await obterItens();
-  await navigator.clipboard.writeText(itens.map(i => i.linha).join('\n'));
-  btnCopiar.textContent = '✓ Copiado!';
-  setTimeout(() => { btnCopiar.textContent = 'Copiar lista salva'; }, 1200);
-});
-
-btnLimpar.addEventListener('click', async () => {
-  if (!confirm('Limpar a lista salva?')) return;
-  await chrome.storage.local.set({ itens: [] });
-  await atualizar();
-});
-
-atualizar();
+renderizar();
+atualizarContagem();
