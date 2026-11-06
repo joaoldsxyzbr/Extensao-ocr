@@ -20,6 +20,12 @@ nunca sai da sua máquina. Os arquivos do modelo ficam embutidos na extensão
 
 ## Usar
 
+Caminho rápido (popup): capture o print (ele vai para a área de transferência),
+clique no ícone da extensão e **cole com Ctrl+V** — o OCR roda ali mesmo no popup
+e os itens aparecem editáveis, prontos para copiar.
+
+Caminho completo (aba do extrator), para vários prints e texto bruto:
+
 - **Cole um print** (Ctrl+V) na página do extrator;
 - **Arraste** imagens para a área tracejada; ou
 - **Clique com o botão direito** em qualquer imagem na web → **"Extrair produtos deste print (OCR)"**.
@@ -28,8 +34,11 @@ Os itens reconhecidos aparecem em linhas **editáveis** (código e descrição).
 Com o print em mãos você pode corrigir eventual erro de OCR na hora.
 
 - **Copiar lista** → copia os itens marcados, um por linha, no padrão acima;
-- **Salvar na lista** → acumula itens entre sessões (`chrome.storage.local`);
-  o popup da extensão mostra a contagem e copia a lista salva.
+- **Salvar na lista** → acumula itens entre sessões (`chrome.storage.local`),
+  visível no popup e na aba do extrator.
+
+> Dica: tire o print **antes** de abrir o popup — capturar a tela tira o foco e
+> fecha o popup. Com o print já na área de transferência, o fluxo é: ícone → Ctrl+V → copiar.
 
 ## Como o texto vira produto
 
@@ -46,8 +55,9 @@ O `parser.js` aplica estas regras ao texto do OCR:
 ```
 manifest.json            MV3; permissões storage/activeTab/contextMenus
 background.js             menu de contexto em imagens + ícone desenhado em runtime
-popup.html/.js            painel rápido (contagem + copiar lista salva)
-ui.html/.css/.js          extrator: colar/arrastar/soltar, OCR, edição, listas
+popup.html/.js            mini-extrator: cola o print e copia a linha no popup
+ocr-comum.js              núcleo OCR compartilhado (worker, idioma, pré-processo)
+ui.html/.css/.js          extrator completo: colar/arrastar, OCR, edição, listas
 parser.js                 parser de produtos (puro, testável em Node)
 vendor/                   Tesseract.js v7 + core LSTM (SIMD) + modelo 'por' (b64)
   origem.json             core/lang: local (padrão) ou cdn (fallback)
