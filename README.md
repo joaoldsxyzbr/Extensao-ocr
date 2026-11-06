@@ -9,20 +9,43 @@ Extensão Chrome/Edge (Manifest V3) que lê **prints de tela** e devolve o texto
 ```
 
 O OCR (rede neural LSTM do Tesseract) roda **100% no navegador** — a imagem do print
-nunca sai da sua máquina. Os arquivos do modelo ficam embutidos na extensão
-(pasta `vendor/`), então funciona offline depois de instalada.
+nunca sai da sua máquina. O modelo do idioma já vem embutido no repo; o core (engine
+WASM) é baixado uma única vez pelo instalador, e depois tudo funciona offline.
 
 ## Instalar
 
 1. Baixe/clone este repositório.
 2. Abra `chrome://extensions` (ou `edge://extensions`) e ative o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e escolha a pasta do projeto.
+4. **Instale o core do OCR** (obrigatório — veja abaixo).
+5. Volte em `chrome://extensions` e clique em **↻ Atualizar** na extensão.
+
+> Sem o passo 4 o OCR não roda: o Chrome (MV3) bloqueia carregar código de CDN
+> dentro da extensão, então o core precisa estar na pasta `vendor/`.
+
+### Instalar o core do OCR (obrigatório)
+
+O core é um arquivo de ~4 MB (`vendor/tesseract-core-simd-lstm.wasm.js`) que não
+vem no repo. Baixe com um comando:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\instalar-offline.ps1   # Windows
+```
+
+```bash
+bash tools/instalar-offline.sh       # Linux/Mac
+```
+
+O script baixa o core (e o modelo do idioma, se faltar) para `vendor/`, grava
+`vendor/origem.json` com `{"core": "local"}` e a extensão passa a usar só arquivos
+locais. Depois disso, atualize a extensão em `chrome://extensions`.
 
 ## Usar
 
 Caminho rápido (popup): capture o print (ele vai para a área de transferência),
-clique no ícone da extensão e **cole com Ctrl+V** — o OCR roda ali mesmo no popup
-e os itens aparecem editáveis, prontos para copiar.
+clique no ícone da extensão e use **"📋 Colar print da área de transferência"**
+ou **Ctrl+V** — o OCR roda ali mesmo no popup e os itens aparecem editáveis,
+prontos para copiar.
 
 Caminho completo (aba do extrator), para vários prints e texto bruto:
 
@@ -38,7 +61,7 @@ Com o print em mãos você pode corrigir eventual erro de OCR na hora.
   visível no popup e na aba do extrator.
 
 > Dica: tire o print **antes** de abrir o popup — capturar a tela tira o foco e
-> fecha o popup. Com o print já na área de transferência, o fluxo é: ícone → Ctrl+V → copiar.
+> fecha o popup. Com o print já na área de transferência, o fluxo é: ícone → colar → copiar.
 
 ## Como o texto vira produto
 
@@ -53,14 +76,14 @@ O `parser.js` aplica estas regras ao texto do OCR:
 ## Estrutura
 
 ```
-manifest.json            MV3; permissões storage/activeTab/contextMenus
+manifest.json            MV3; permissões storage/activeTab/contextMenus/clipboard
 background.js             menu de contexto em imagens + ícone desenhado em runtime
 popup.html/.js            mini-extrator: cola o print e copia a linha no popup
 ocr-comum.js              núcleo OCR compartilhado (worker, idioma, pré-processo)
 ui.html/.css/.js          extrator completo: colar/arrastar, OCR, edição, listas
 parser.js                 parser de produtos (puro, testável em Node)
-vendor/                   Tesseract.js v7 + core LSTM (SIMD) + modelo 'por' (b64)
-  origem.json             core/lang: local (padrão) ou cdn (fallback)
+vendor/                   Tesseract.js v7 + modelo 'por' (b64) + core (via instalador)
+  origem.json             core/lang: local (padrão após instalador) ou cdn
 tools/                    geradores, instaladores offline e teste de OCR
 tests/                    testes do parser (prints sintéticos: gere com tools/)
 ```
@@ -78,23 +101,10 @@ repo não carrega PNGs binários. Se quiser ícones "de arquivo", rode
 |---|---|---|
 | Engine Tesseract (tesseract.min.js, worker.min.js) | embutido no repo | ✅ sempre |
 | Modelo do idioma `por` (b64) | embutido no repo → cache IndexedDB | ✅ sempre |
-| Core LSTM (wasm, ~4 MB) | CDN por padrão; arquivo local se instalar | 🌐 / ✅ |
+| Core LSTM (wasm, ~4 MB) | `vendor/`, baixado pelo instalador | ✅ após instalar |
 
 **A imagem do print nunca sai do navegador** — só os arquivos do modelo (públicos)
-podem ser baixados. O core via CDN fica no cache HTTP do navegador após o
-primeiro uso.
-
-### 100% offline (recomendado)
-
-```bash
-bash tools/instalar-offline.sh      # Linux/Mac
-# ou
-powershell -ExecutionPolicy Bypass -File tools\instalar-offline.ps1   # Windows
-```
-
-Isso baixa o core para `vendor/` e grava `vendor/origem.json` com
-`{"core": "local"}` — a extensão detecta e passa a usar só arquivos locais.
-Se o OCR não iniciar com o core via CDN (CSP de rede), rode o script acima.
+são baixados, uma única vez, pelo instalador.
 
 ## Testes
 
