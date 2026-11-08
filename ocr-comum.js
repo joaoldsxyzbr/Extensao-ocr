@@ -44,19 +44,24 @@ const OCRComum = (function () {
     }
 
     const lang = pref.lang === 'cdn' ? 'cdn' : 'local-b64';
-    return { core, coreAuto };
+    return { core, coreAuto, lang };
   }
 
-  /* IndexedDB no formato do idb-keyval (db 'keyval', store 'keyval') —
-     é o cache oficial do tesseract.js para o .traineddata. */
+  /* IndexedDB no formato do idb-keyval usado pelo tesseract.js v7:
+     banco 'keyval-store', store 'keyval' (ver vendor/worker.min.js, módulo 613).
+     É o cache oficial do .traineddata — se o nome do banco não bater, o worker
+     nunca acha o modelo e o OCR fica dependendo da rede. */
+  const IDB_BANCO = 'keyval-store';
+  const IDB_STORE = 'keyval';
+
   function idbGet(chave) {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open('keyval', 1);
-      req.onupgradeneeded = () => req.result.createObjectStore('keyval');
+      const req = indexedDB.open(IDB_BANCO, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction('keyval', 'readonly');
-        const get = tx.objectStore('keyval').get(chave);
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const get = tx.objectStore(IDB_STORE).get(chave);
         get.onsuccess = () => { db.close(); resolve(get.result); };
         get.onerror = () => { db.close(); reject(get.error); };
       };
@@ -66,12 +71,12 @@ const OCRComum = (function () {
 
   function idbSet(chave, valor) {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open('keyval', 1);
-      req.onupgradeneeded = () => req.result.createObjectStore('keyval');
+      const req = indexedDB.open(IDB_BANCO, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction('keyval', 'readwrite');
-        tx.objectStore('keyval').put(valor, chave);
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(valor, chave);
         tx.oncomplete = () => { db.close(); resolve(); };
         tx.onerror = () => { db.close(); reject(tx.error); };
       };
@@ -79,8 +84,22 @@ const OCRComum = (function () {
     });
   }
 
+  /* Descompacta gzip usando a API do navegador (DecompressionStream); se não
+     existir, cai num decodificador mínimo de gzip (deflate via
+     DecompressionStream('deflate-raw') ou erro claro). */
+  async function descompactarGzip(gz) {
+    if (typeof DecompressionStream === 'function') {
+      const stream = new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    throw new Error('Este navegador não suporta DecompressionStream (necessário para o modelo local).');
+  }
+
   /* 'local-b64': o modelo 'por' vem embutido como base64 (arquivo de texto no
-     repo); decodifica uma vez e grava no cache IndexedDB do tesseract. */
+     repo); decodifica uma vez e grava no cache IndexedDB do tesseract.
+     Importante: o worker espera o .traineddata DESCOMPACTADO no cache (ele só
+     descompacta o que baixa da rede). Gravar o .gz aqui faz o worker falhar
+     no Init e cair na rede — por isso descompactamos antes de gravar. */
   async function garantirIdioma(o) {
     if (o.lang !== 'local-b64') return;
     const jaTem = await idbGet('./por.traineddata').catch(() => undefined);
@@ -89,8 +108,9 @@ const OCRComum = (function () {
     if (!r.ok) throw new Error('vendor/langs/por.traineddata.gz.b64 não encontrado (rode tools/instalar-offline)');
     const b64 = (await r.text()).trim();
     const bin = atob(b64.replace(/\s+/g, ''));
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const gz = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) gz[i] = bin.charCodeAt(i);
+    const bytes = await descompactarGzip(gz);
     await idbSet('./por.traineddata', bytes);
   }
 

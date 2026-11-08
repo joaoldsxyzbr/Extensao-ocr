@@ -1,1 +1,1 @@
-{"core": "auto", "lang": "auto", "nota": "core: auto|local|cdn — auto usa vendor/tesseract-core-simd-lstm.wasm.js se existir (baixe com tools/instalar-offline); senão CDN. lang: auto usa o b64 embutido (vendor/langs/por.traineddata.gz.b64); cdn baixa de tessdata.projectnaptha.com."}
+{"core": "local", "lang": "auto"}

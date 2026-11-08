@@ -100,11 +100,16 @@ repo não carrega PNGs binários. Se quiser ícones "de arquivo", rode
 | Componente | De onde vem | Offline? |
 |---|---|---|
 | Engine Tesseract (tesseract.min.js, worker.min.js) | embutido no repo | ✅ sempre |
-| Modelo do idioma `por` (b64) | embutido no repo → cache IndexedDB | ✅ sempre |
+| Modelo do idioma `por` (b64) | embutido no repo → cache IndexedDB (`keyval-store`) | ✅ sempre |
 | Core LSTM (wasm, ~4 MB) | `vendor/`, baixado pelo instalador | ✅ após instalar |
 
 **A imagem do print nunca sai do navegador** — só os arquivos do modelo (públicos)
 são baixados, uma única vez, pelo instalador.
+
+> Detalhe do cache: o tesseract.js v7 guarda o `.traineddata` no IndexedDB
+> **`keyval-store`** (store `keyval`), já **descompactado**. O `ocr-comum.js`
+> descompacta o b64 e grava nesse mesmo banco — se o nome do banco ou o formato
+> não baterem, o worker não acha o modelo e o OCR fica pendurado tentando a rede.
 
 ## Testes
 

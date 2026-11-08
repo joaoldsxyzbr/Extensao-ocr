@@ -13,5 +13,6 @@ curl -sL https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js -o v
 echo "Baixando core LSTM (SIMD)…"
 curl -sL https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js -o vendor/tesseract-core-simd-lstm.wasm.js
 
-echo '{"core": "local", "lang": "local"}' > vendor/origem.json
+# lang "auto" = usa o b64 embutido no repo (vendor/langs/por.traineddata.gz.b64).
+echo '{"core": "local", "lang": "auto"}' > vendor/origem.json
 echo "Pronto: core local instalado — extensão 100% offline."

@@ -1,3 +1,9 @@
 .DS_Store
 Thumbs.db
 *.log
+
+# Core do OCR (~4 MB): baixado por tools/instalar-offline.ps1|.sh
+vendor/tesseract-core-*.wasm.js
+
+# Prints sintéticos: gerados por tools/gerar-prints-teste.py
+tests/print-sintetico-*.png
