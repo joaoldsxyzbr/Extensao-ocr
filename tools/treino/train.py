@@ -15,7 +15,7 @@ NIN, NH, NC = 323, 160, len(CHARS)
 def load():
     d = np.load(BASE / 'dataset.npz')
     X, y = d['X'], d['y']
-    return X.astype(np.float32), y.astype(np.int64)
+    return X, y.astype(np.int64)  # X segue float16: cast por batch (RAM)
 
 def forward(Xb, W1, b1, W2, b2):
     h = np.maximum(Xb @ W1 + b1, 0.0)          # (B,NH)
@@ -60,7 +60,7 @@ def main():
         lt = 0.0
         for bi in range(nb):
             s = ordem[bi * B:(bi + 1) * B]
-            Xb, yb = Xtr[s], ytr[s]
+            Xb, yb = Xtr[s].astype(np.float32), ytr[s]
             h, o = forward(Xb, W1, b1, W2, b2)
             p, loss = softmax_ce(o, yb)
             lt += loss
@@ -81,7 +81,7 @@ def main():
         # val
         acertos = 0
         for s in range(0, len(Xva), 4096):
-            _, o = forward(Xva[s:s + 4096], W1, b1, W2, b2)
+            _, o = forward(Xva[s:s + 4096].astype(np.float32), W1, b1, W2, b2)
             acertos += (o.argmax(axis=1) == yva[s:s + 4096]).sum()
         acc = acertos / len(Xva)
         lrl = lr * (0.5 ** (ep // 10)) if False else lr
@@ -105,12 +105,13 @@ def main():
             linhas.append('      ' + corpo + fim)
         return '\n'.join(linhas)
     chars_js = json.dumps(CHARS)
-    hdr = f"""/* rede-ocr.js - pesos da rede neural do OCR proprio (v2.1.0).
+    hdr = f"""/* rede-ocr.js - pesos da rede neural do OCR proprio (v2.2.0).
    MLP: 323 entradas (16x20 + 3 medidas relativas a banda) -> 160 ocultas (ReLU) -> 71 classes (softmax).
    Treinada com glifos sinteticos de 13 variantes de fonte (Arimo 300-600, Carlito, DejaVu, Roboto, Mono),
-   11-26px, gaps naturais a colados, variantes downscale 2x (AA), fundos claros, augment em nivel de grid.
-   Corrige a classe de falha do print real de 09/11 (TIROL->MROL, BATAVINHO->BMAVINHO, 400G->WOG):
-   glifos apertados/fundidos agora leem com confianca alta e o DP divide em vez de aceitar a leitura fundida.
+   11-30px, gaps naturais a colados (ate -1.5px de overlap), texto claro (gray 80), variantes downscale 2x
+   (AA), fundos claros, augment em nivel de grid.
+   v2.2 = hard-example mining da grade de regressao: ataca os 110 casos de glifo errado do v2.1.0
+   (texto fraco c80, gaps apertados 13-17px, extremos de tamanho 12-15 e 21-28px).
    Gerado automaticamente por train.py; nao editar a mao. */
 (function (raiz) {{
   'use strict';
@@ -127,7 +128,7 @@ def main():
   }};
 }})(typeof self !== 'undefined' ? self : this);
 """
-    out = BASE / 'rede-ocr-v2.1.js'
+    out = BASE / 'rede-ocr-v2.2.js'
     out.write_text(hdr)
     print('exportado:', out, out.stat().st_size, 'bytes')
     print('melhor val acc:', f'{best_acc*100:.3f}%')
