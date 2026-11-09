@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Extrator de Produtos (OCR)",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Extrai código + descrição de produtos de prints com OCR 100% local (rede neural própria, sem dependências) e monta no padrão 'CÓDIGO DESCRIÇÃO UN'.",
   "permissions": [
     "storage",
