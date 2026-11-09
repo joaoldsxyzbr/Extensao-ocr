@@ -57,7 +57,7 @@ async function processarFila() {
       if (!novos.length) status('Nenhum produto reconhecido — use o extrator completo pra ver o texto bruto.', false);
       else toastNoStatus(`✅ ${novos.length} item(ns) lidos (confiança ${confianca}).`);
     } catch (e) {
-      status('Falha no OCR: ' + (e.message || e) + '. Se persistir, rode tools/instalar-offline.', false);
+      status('Falha no OCR: ' + (e.message || e) + '. Verifique se o print mostra a tabela nítida e tente de novo.', false);
     }
   }
   processando = false;
