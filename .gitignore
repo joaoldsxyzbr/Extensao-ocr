@@ -23,5 +23,7 @@ tools/treino/motor_novo/
 tools/treino/dataset.npz
 tools/treino/pesos-treino.npz
 tools/treino/fts_tmp.txt
-tools/treino/rede-ocr-v2.1.js
+tools/treino/rede-ocr-v2.*.js
+tools/treino/dataset-p*.npz
+tools/treino/saidas*.json
 __pycache__/
