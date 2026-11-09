@@ -6,10 +6,16 @@
  *   94940 IOGURTE BATAVO PENSE 1150G ZERO MORANGO UN
  *   104527 BEBIDA LACTEA PARMALAT FIT FLEX CHOCOLATE 250ML UN
  *   96551 DIANTEIRO BOV RESF C/ OSSO KG
+ *   7 BANANA PRATA KG
  *
  * Regras:
- *  - código: token numérico isolado de 4 a 8 dígitos (não colado em letras,
- *    então "250ML" e "C/ OSSO" não são confundidos com código);
+ *  - código: token numérico isolado de 1 a 8 dígitos — os códigos do ERP do
+ *    João têm tamanhos variados, até 1 dígito. Colado em letra não é código
+ *    ("250ML" e "1150G" ficam na descrição);
+ *  - numeração de linha antes do código ("20 96551 DIANTEIRO...") é
+ *    descartada: no começo da linha, de uma sequência de tokens numéricos,
+ *    o ÚLTIMO é o código e os anteriores são numeração de grade;
+ *  - linha "quantidade + unidade" sozinha (ex.: "3 KG", "10 CX") não é produto;
  *  - descrição: texto que segue o código na mesma linha, SEM ACENTO,
  *    maiúsculo, espaços simples, sem rótulos ("Descrição do produto:" etc.)
  *    e sem número de quantidade solto no final;
@@ -21,8 +27,15 @@
 (function (raiz) {
   'use strict';
 
-  // Código: 4-8 dígitos, não encostado em letra ou número ("250ML" não é código).
-  var RE_CODIGO = /(^|[^A-Z0-9])(\d{4,8})(?![A-Z0-9])/;
+  // Código: 1-8 dígitos, não encostado em letra ou número ("250ML" não é código).
+  var RE_CODIGO = /(^|[^A-Z0-9])(\d{1,8})(?![A-Z0-9])/;
+
+  // Sequência de tokens numéricos no começo da linha ("20 96551", "1 1083",
+  // "7"). O lookahead impede "250ML" de virar sequência.
+  var RE_INICIO_NUM = /^(\d{1,8}(?:\s+\d{1,8})*)(?![A-Z0-9])/;
+
+  // Unidades conhecidas do ERP (coluna de unidade das linhas de produto).
+  var RE_SOMENTE_UNIDADE = /^(?:KG|UN|CX|PC|LT|FD|DZ|MT|SC|RL|PAR|BAR)$/;
 
   // Rótulos de tela: linha/começo de descrição que começa com isto é ruído.
   var ROTULOS = [
@@ -50,11 +63,12 @@
       .trim();
   }
 
-  // Remove rótulo do início da linha ("Código: 123", "25 -", "1) ").
+  // Remove rótulo do início da linha (apenas "CODIGO:"/"COD:").
+  // Numeração NÃO é arrancada aqui (código pode ter 1 dígito):
+  // quem decide código vs. numeração é extrairProdutos.
   function limparRotulos(linha) {
     return linha
       .replace(/^COD(?:IGO|\.)?\s*[:\-.]?\s*/, '')
-      .replace(/^\d{1,3}[).\s]\s*/, '')
       .trim();
   }
 
@@ -62,6 +76,8 @@
     if (!desc) return true;
     // Quase sem letras → é número solto, não descrição.
     if (desc.replace(/[^A-Z]/g, '').length < 2) return true;
+    // Um token só que é unidade ("3 KG" → descrição "KG") não é produto.
+    if (!/\s/.test(desc) && RE_SOMENTE_UNIDADE.test(desc)) return true;
     for (var i = 0; i < ROTULOS.length; i++) {
       if (desc.indexOf(ROTULOS[i]) === 0) return true;
     }
@@ -111,12 +127,29 @@
 
     for (var i = 0; i < linhas.length; i++) {
       var linha = limparRotulos(linhas[i]);
-      var m = linha.match(RE_CODIGO);
-      if (!m) continue;
-      var codigo = m[2];
-      var pos = linha.indexOf(codigo, m.index);
-      var depois = linha.slice(pos + codigo.length);
-      var antes = linha.slice(0, pos);
+
+      var codigo, antes, depois;
+      var mi = linha.match(RE_INICIO_NUM);
+      if (mi) {
+        // Começo da linha com tokens numéricos: o último é o código,
+        // os anteriores são numeração de linha ("20 96551 DIANTEIRO...").
+        var tokens = mi[1].split(/\s+/);
+        codigo = tokens[tokens.length - 1];
+        var pos = mi[0].length - codigo.length;
+        depois = linha.slice(pos + codigo.length);
+        antes = linha.slice(0, pos);
+      } else {
+        // Sem sequência no começo: código em qualquer posição (leftmost).
+        var m = linha.match(RE_CODIGO);
+        if (!m) continue;
+        codigo = m[2];
+        var pos2 = linha.indexOf(codigo, m.index);
+        depois = linha.slice(pos2 + codigo.length);
+        antes = linha.slice(0, pos2);
+      }
+
+      // Linha "quantidade + unidade" sozinha ("3 KG", "10 CX") não é produto.
+      if (RE_SOMENTE_UNIDADE.test(depois.trim())) continue;
 
       if (quaseSemLetra(antes) && quaseSemLetra(depois)) {
         // Código sozinho na linha: descrição nas linhas seguintes,
