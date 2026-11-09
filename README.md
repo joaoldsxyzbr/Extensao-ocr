@@ -51,6 +51,7 @@ localmente.
 | `background.js` | Menu de contexto "Extrair produtos" |
 | `tests/test-parser.js` | Testes do parser (Node) |
 | `tools/gerar-prints-teste.py` | Gera prints sintéticos para teste |
+| `tools/treino/` | Pipeline de treino da rede + suite de regressão (ver `tools/treino/README.md`) |
 
 ## Qualidade esperada
 
