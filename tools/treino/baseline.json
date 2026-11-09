@@ -1,5 +1,5 @@
 {
- "modelo": "gerado por regressao.py --gerar-baseline",
+ "modelo": "v2.2.0",
  "verdes": [
   "14az",
   "14br",
