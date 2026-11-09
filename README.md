@@ -9,24 +9,23 @@ Extensão Chrome/Edge (Manifest V3) que lê **prints de tela** e devolve o texto
 ```
 
 O OCR (rede neural LSTM do Tesseract) roda **100% no navegador** — a imagem do print
-nunca sai da sua máquina. O modelo do idioma já vem embutido no repo; o core (engine
-WASM) é baixado uma única vez pelo instalador, e depois tudo funciona offline.
+nunca sai da sua máquina. O modelo do idioma e o core (engine WASM) já vêm embutidos
+no repo: todo clone funciona offline, sem passo adicional.
 
 ## Instalar
 
 1. Baixe/clone este repositório.
 2. Abra `chrome://extensions` (ou `edge://extensions`) e ative o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e escolha a pasta do projeto.
-4. **Instale o core do OCR** (obrigatório — veja abaixo).
-5. Volte em `chrome://extensions` e clique em **↻ Atualizar** na extensão.
+4. Pronto — o OCR já funciona offline. Não há passo adicional.
 
-> Sem o passo 4 o OCR não roda: o Chrome (MV3) bloqueia carregar código de CDN
-> dentro da extensão, então o core precisa estar na pasta `vendor/`.
+> O core do OCR (`vendor/tesseract-core-simd-lstm.wasm.js`, ~4 MB) veio versionado
+> no repo, baixado pelo CI (`.github/workflows/baixar-core.yml`). Ele não é buscado
+> por CDN porque o Chrome (MV3) bloqueia carregar código externo na extensão.
 
-### Instalar o core do OCR (obrigatório)
+### Atualizar o core do OCR (opcional)
 
-O core é um arquivo de ~4 MB (`vendor/tesseract-core-simd-lstm.wasm.js`) que não
-vem no repo. Baixe com um comando:
+O instalador continua disponível para forçar origem local ou renovar o core:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\instalar-offline.ps1   # Windows
@@ -37,8 +36,9 @@ bash tools/instalar-offline.sh       # Linux/Mac
 ```
 
 O script baixa o core (e o modelo do idioma, se faltar) para `vendor/`, grava
-`vendor/origem.json` com `{"core": "local", "lang": "auto"}` e a extensão passa a usar só arquivos
-locais. Depois disso, atualize a extensão em `chrome://extensions`.
+`vendor/origem.json` com `{"core": "local", "lang": "auto"}` e a extensão passa a usar só
+arquivos locais. Para trocar a versão do Tesseract, edite a URL no workflow do CI
+e rode-o na aba Actions.
 
 ## Usar
 
@@ -82,7 +82,7 @@ popup.html/.js            mini-extrator: cola o print e copia a linha no popup
 ocr-comum.js              núcleo OCR compartilhado (worker, idioma, pré-processo)
 ui.html/.css/.js          extrator completo: colar/arrastar, OCR, edição, listas
 parser.js                 parser de produtos (puro, testável em Node)
-vendor/                   Tesseract.js v7 + modelo 'por' (b64) + core (via instalador)
+vendor/                   Tesseract.js v7 + modelo 'por' (b64) + core (versionado no repo)
   origem.json             core/lang: auto (padrão do repo, detecta o core local) ou local (pós-instalador)
 tools/                    geradores, instaladores offline e teste de OCR
 tests/                    testes do parser (prints sintéticos: gere com tools/)
@@ -101,10 +101,10 @@ repo não carrega PNGs binários. Se quiser ícones "de arquivo", rode
 |---|---|---|
 | Engine Tesseract (tesseract.min.js, worker.min.js) | embutido no repo | ✅ sempre |
 | Modelo do idioma `por` (b64) | embutido no repo → cache IndexedDB (`keyval-store`) | ✅ sempre |
-| Core LSTM (wasm, ~4 MB) | `vendor/`, baixado pelo instalador | ✅ após instalar |
+| Core LSTM (wasm, ~4 MB) | `vendor/`, versionado no repo (baixado pelo CI) | ✅ sempre |
 
-**A imagem do print nunca sai do navegador** — só os arquivos do modelo (públicos)
-são baixados, uma única vez, pelo instalador.
+**A imagem do print nunca sai do navegador** — nenhum arquivo é baixado em
+execução; engine, modelo e core já vêm no repositório.
 
 > Detalhe do cache: o tesseract.js v7 guarda o `.traineddata` no IndexedDB
 > **`keyval-store`** (store `keyval`), já **descompactado**. O `ocr-comum.js`
