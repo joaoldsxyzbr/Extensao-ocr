@@ -1,0 +1,53 @@
+name: Baixar core do OCR
+# Baixa o tesseract-core-simd-lstm.wasm.js (~3,9 MB) e commita em vendor/.
+# Motivo: o sandbox do Vibe nao carrega esse tamanho (limite 16 MiB) e o
+# Chrome MV3 bloqueia CDN em runtime. Com o core versionado, todo clone
+# ja vem com OCR 100% offline, sem precisar do instalador.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/baixar-core.yml
+
+permissions:
+  contents: write
+
+jobs:
+  baixar-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar core LSTM SIMD (tesseract.js-core 7.0.0)
+        run: |
+          curl -fsSL -o vendor/tesseract-core-simd-lstm.wasm.js \
+            "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/tesseract-core-simd-lstm.wasm.js"
+
+      - name: Validar download
+        run: |
+          f=vendor/tesseract-core-simd-lstm.wasm.js
+          size=$(stat -c%s "$f")
+          if [ "$size" -lt 1000000 ]; then
+            echo "ERRO: arquivo com $size bytes (esperado ~3.900.000) - provavelmente pagina de erro"
+            exit 1
+          fi
+          if head -c 200 "$f" | grep -qi '<html'; then
+            echo "ERRO: conteudo parece HTML, nao o core JS"
+            exit 1
+          fi
+          echo "Tamanho: $size bytes"
+          echo "sha1 puro: $(sha1sum "$f" | cut -d' ' -f1)"
+          echo "sha1 git blob: $(git hash-object "$f")"
+
+      - name: Commitar se houver mudanca
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/tesseract-core-simd-lstm.wasm.js
+          if git diff --cached --quiet; then
+            echo "Core ja atualizado no repo - nada a commitar."
+            exit 0
+          fi
+          git commit -m "Adiciona core do OCR: tesseract-core-simd-lstm.wasm.js v7.0.0 (via CI)"
+          git push
