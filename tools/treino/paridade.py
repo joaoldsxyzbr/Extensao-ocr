@@ -54,6 +54,6 @@ if __name__ == '__main__':
                        capture_output=True, text=True, timeout=120)
     preds = json.loads(r.stdout)
     acertos = sum(1 for p, l in zip(preds, labels) if p['ch'] == l)
-    print(f'rede v2.0.1 nas features limpas: {acertos}/{len(labels)} = {100*acertos/len(labels):.2f}%')
+    print(f'rede atual (raiz do repo) nas features limpas: {acertos}/{len(labels)} = {100*acertos/len(labels):.2f}%')
     erros = [(l, p['ch'], round(p['conf'], 3)) for p, l in zip(preds, labels) if p['ch'] != l]
     print('erros:', erros[:25])
