@@ -1,4 +1,4 @@
-# Extrator de Produtos (OCR) — v2.2.0
+# Extrator de Produtos (OCR) — v2.2.1
 
 Extensão Chrome (Manifest V3) que lê prints de telas de ERP e extrai a lista de
 produtos no padrão:
@@ -42,7 +42,7 @@ localmente.
 
 | Arquivo | Papel |
 | --- | --- |
-| `manifest.json` | Manifest V3 (v2.1.0), sem permissões de rede |
+| `manifest.json` | Manifest V3 (v2.2.1), sem permissões de rede |
 | `ocr-comum.js` | Motor de OCR (rede neural + segmentação) |
 | `rede-ocr.js` | Pesos treinados (gerado por `train.py`) |
 | `parser.js` | Extração de código + descrição no padrão do ERP |
@@ -68,6 +68,16 @@ fundo azul (sem grade). Linhas inteiras corretas, incluindo espaços:
 | Tabela com linha azul, 21 px | 9/9 |
 | Tabela com linha azul, 23 px | 9/9 |
 | Tabela com linha azul, 21 px + desfoque | 9/9 |
+
+### v2.2.1 — códigos de qualquer tamanho (1 a 8 dígitos)
+
+Print real de hortifruti com códigos de 3 e 4 dígitos devolvia só o produto
+de 4 dígitos: o parser exigia código de 4 a 8 dígitos e ainda arrancava
+números de 1 a 3 dígitos do começo da linha antes de procurar o código.
+Agora o parser aceita códigos de 1 a 8 dígitos, distingue numeração de linha
+do código (numa sequência numérica no começo da linha, o último token é o
+código) e não deixa "quantidade + unidade" sozinha (ex.: "3 KG") virar
+produto. Motor e rede inalterados. Testes do parser: 15/15 (eram 8).
 
 ### v2.2.0 — retreino de robustez (hard-example mining)
 
