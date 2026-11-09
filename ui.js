@@ -64,7 +64,7 @@ async function processarFila() {
         `--- ${arquivo.name || 'print'} (confiança ${confianca}) ---\n` + texto;
       if (!itens.length) toast('Nenhum produto reconhecido nesse print — confira o texto bruto.', false);
     } catch (e) {
-      toast('Falha no OCR (' + (e.message || e) + '). Se persistir, rode tools/instalar-offline para usar tudo local.', false);
+      toast('Falha no OCR (' + (e.message || e) + '). Verifique se o print mostra a tabela nítida.', false);
       fila.length = 0;
       break;
     }
