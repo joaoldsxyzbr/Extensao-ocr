@@ -19,6 +19,7 @@ o que vai pra ela é um único arquivo de texto (`rede-ocr.js` na raiz). Tudo aq
 | `regressao.py` | **O GATE**: motor da raiz vs gabarito; falha se regredir caso verde |
 | `baseline.json` | Lista de casos verdes (acertos) congelada na versão atual |
 | `bin-do-print.py` | Converte print REAL (PNG) no formato `.bin` da suíte |
+| `analisa.py` | Diagnóstico: classifica erros da grade (espaço falso × glifo errado) |
 | `render.py`, `sweep2/3/4.py`, `testa_upscale.py` | Varreduras de diagnóstico (escala, gap, peso, contraste, upscale) |
 
 ## Preparo (uma vez por máquina)
@@ -34,7 +35,10 @@ o que vai pra ela é um único arquivo de texto (`rede-ocr.js` na raiz). Tudo aq
 
 ## Fluxo do retreino (regras)
 
-1. `python gen.py` — gera `dataset.npz` (leva alguns minutos).
+1. `python gen.py` — gera o `dataset.npz`. Direto leva ~8 min; se o ambiente
+   matar processos longos, rode por fonte (determinístico, ~34 s cada):
+   `python gen.py 0`, `python gen.py 1` … `python gen.py 11`, depois
+   `python gen.py merge` (concatena os `dataset-p*.npz`).
 2. `python train.py` — treina e exporta `rede-ocr-v2.1.js` (early stop por val acc).
 3. Substitua o motor: copie `rede-ocr-v2.1.js` para a **raiz** como `rede-ocr.js`.
 4. `python regressao.py` — **zero regressões obrigatório** (caso verde que virou
@@ -62,6 +66,12 @@ Sem gabarito o print não vira teste — anotar o esperado é o que faz valer.
 
 ## Histórico
 
+- v2.2.0 (10/11/2026): hard-example mining — gaps até -1,5 px, texto claro
+  (gray 80), tamanhos até 30 px. Val acc 99,60%; grade 140: mesma nota
+  (20/140), 0 regressões, **saída idêntica nos 140** → classificador
+  esgotado; erros restantes são do motor (ver
+  `docs/specs/2026-11-10-motor-ocr-design.md`). Cinza 130 não treina: tinta
+  0,49 fica abaixo do limiar 0,50 de run do motor (glifo nunca chega à rede).
 - v2.0.0 (09/11/2026): motor próprio, rede de 4 fontes.
 - v2.0.1 (09/11/2026): DP de segmentação + escala real 19-23px, rede de 11 fontes.
 - v2.1.0 (10/11/2026): retreino com 13 variantes de fonte, gaps colados e AA
