@@ -37,7 +37,7 @@ bash tools/instalar-offline.sh       # Linux/Mac
 ```
 
 O script baixa o core (e o modelo do idioma, se faltar) para `vendor/`, grava
-`vendor/origem.json` com `{"core": "local"}` e a extensão passa a usar só arquivos
+`vendor/origem.json` com `{"core": "local", "lang": "auto"}` e a extensão passa a usar só arquivos
 locais. Depois disso, atualize a extensão em `chrome://extensions`.
 
 ## Usar
@@ -83,7 +83,7 @@ ocr-comum.js              núcleo OCR compartilhado (worker, idioma, pré-proces
 ui.html/.css/.js          extrator completo: colar/arrastar, OCR, edição, listas
 parser.js                 parser de produtos (puro, testável em Node)
 vendor/                   Tesseract.js v7 + modelo 'por' (b64) + core (via instalador)
-  origem.json             core/lang: local (padrão após instalador) ou cdn
+  origem.json             core/lang: auto (padrão do repo, detecta o core local) ou local (pós-instalador)
 tools/                    geradores, instaladores offline e teste de OCR
 tests/                    testes do parser (prints sintéticos: gere com tools/)
 ```
