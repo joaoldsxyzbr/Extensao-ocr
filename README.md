@@ -1,4 +1,4 @@
-# Extrator de Produtos (OCR) — v2.0.1
+# Extrator de Produtos (OCR) — v2.1.0
 
 Extensão Chrome (Manifest V3) que lê prints de telas de ERP e extrai a lista de
 produtos no padrão:
@@ -15,13 +15,16 @@ A partir da v2.0.0 o OCR é um motor próprio com rede neural embutida no
 repositório. Não há Tesseract, WASM, CDN, instalador ou workflow de CI:
 
 - `rede-ocr.js` — pesos da rede (MLP 323 → 160 → 71) treinada com glifos
-  sintéticos de 11 fontes sans de tela, 11–25 px, com aumento de dados
-  (deslocamento, borrão, ruído, escala).
+  sintéticos de 13 variantes de fonte sans (Arimo 300–600, Carlito reg/bold,
+  DejaVu reg/bold, Mono reg/bold, Roboto reg/bold), 11–26 px, com
+  espaçamento natural até glifos colados, variantes redimensionadas (AA de
+  downscale 2x) e fundos claros, além de aumentação (deslocamento, borrão,
+  ruído, escala, fase).
 - `ocr-comum.js` — motor: tinta → limpeza de grade → bandas de linha →
   runs → divisão ótima de glifos fundidos (programação dinâmica pelo produto
   das confianças) → features do glifo → rede neural → regras de contexto
   (primeiro token = código, só dígitos) → reparos por token.
-- Tudo é texto plano (~450 KB no total). Nada para baixar, nenhum antivírus
+- Tudo é texto plano (~620 KB no total). Nada para baixar, nenhum antivírus
   reclama do pacote, nenhum passo de instalação.
 
 A imagem nunca sai do navegador: ela é lida em um `<canvas>` e classificada
@@ -39,7 +42,7 @@ localmente.
 
 | Arquivo | Papel |
 | --- | --- |
-| `manifest.json` | Manifest V3 (v2.0.1), sem permissões de rede |
+| `manifest.json` | Manifest V3 (v2.1.0), sem permissões de rede |
 | `ocr-comum.js` | Motor de OCR (rede neural + segmentação) |
 | `rede-ocr.js` | Pesos treinados (gerado por `train.py`) |
 | `parser.js` | Extração de código + descrição no padrão do ERP |
@@ -65,9 +68,21 @@ fundo azul (sem grade). Linhas inteiras corretas, incluindo espaços:
 | Tabela com linha azul, 23 px | 9/9 |
 | Tabela com linha azul, 21 px + desfoque | 9/9 |
 
-O motor JavaScript produz exatamente a mesma saída da referência de treino
-(66/66 linhas idênticas na suíte automatizada). Se algum caractere vier
-errado, a interface permite editar antes de copiar.
+### v2.1.0 — robustez a glifos apertados e anti-aliasing
+
+Retreino da rede (mesma arquitetura, motor inalterado) para corrigir a classe
+de falha observada em print real de 09/11 (códigos certos, descrições com
+glifos fundidos: TIROL→MROL, BATAVINHO→BMAVINHO, 400G→WOG). O novo treino
+inclui glifos quase colados, variantes redimensionadas (AA) e pesos finos a
+semibold. Validação:
+
+- Glifos limpos: 99,75% (antes 98,18% na mesma suíte);
+- Grade de 133 prints sintéticos (Arimo/Carlito, 9–19 px, fundo branco/azul,
+  espaçamento natural a colado): 5 casos corrigidos, 0 regressões;
+- Nos casos de espaçamento apertado a rede nova recupera as descrições
+  (ex.: "PM8 WGW EA1ATAVINHO" → "PETIT SUISSE BATATAVINHO").
+
+Se algum caractere vier errado, a interface permite editar antes de copiar.
 
 ## Limitações
 
@@ -76,5 +91,5 @@ errado, a interface permite editar antes de copiar.
 - A fonte alvo é Calibri/Carlito (ERP). Em fontes de outra métrica o núcleo
   de glifos continua correto, mas o espaçamento entre palavras pode gerar
   falsos espaços.
-- Se uma letra do print estiver fisicamente colada na outra (kerning
-  extremo), a segmentação pode unir os dois glifos.
+- Kerning extremo com glifos fisicamente colados ainda pode fundir dois
+  glifos, mas a janela de falha ficou bem menor na v2.1.0.
