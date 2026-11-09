@@ -22,7 +22,7 @@ def main():
     W1, b1, W2, b2 = d['W1'], d['b1'], d['W2'], d['b2']
     assert W1.shape == (323, 160) and W2.shape == (160, 71), (W1.shape, W2.shape)
     chars_js = json.dumps(CHARS)
-    hdr = f"""/* rede-ocr.js - pesos da rede neural do OCR proprio (v2.1.0).
+    hdr = f"""/* rede-ocr.js - pesos da rede neural do OCR proprio (v2.2.0).
    MLP: 323 entradas (16x20 + 3 medidas relativas a banda) -> 160 ocultas (ReLU) -> 71 classes (softmax).
    Treinada com glifos sinteticos de 13 variantes de fonte (Arimo 300-600, Carlito, DejaVu, Roboto, Mono),
    11-26px, gaps naturais a colados, variantes downscale 2x (AA), fundos claros, augment em nivel de grid.
@@ -44,7 +44,7 @@ def main():
   }};
 }})(typeof self !== 'undefined' ? self : this);
 """
-    out = BASE / 'rede-ocr-v2.1.js'
+    out = BASE / 'rede-ocr-v2.2.js'
     out.write_text(hdr)
     print('exportado:', out, out.stat().st_size, 'bytes')
 
