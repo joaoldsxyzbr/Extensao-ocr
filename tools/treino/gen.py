@@ -96,7 +96,7 @@ def features(ink, y0, hband, x0, x1):
 
 # ---------- render da mini-linha ----------
 
-def render_miniline(font, size, c, gap_extra, bg_gray, do2x, filtro):
+def render_miniline(font, size, c, gap_extra, bg_gray, do2x, filtro, txt_gray=0):
     esc = 2 if do2x else 1
     f = get_font(font[1], font[2], size * esc)
     adv = {ch: f.getlength(ch) for ch in 'H' + c}
@@ -110,9 +110,9 @@ def render_miniline(font, size, c, gap_extra, bg_gray, do2x, filtro):
     ty = 2 * esc
     img = Image.new('L', (max(W, 10), H), int(round(bg_gray * 255)))
     d = ImageDraw.Draw(img)
-    d.text((int(round(xh1)), ty), 'H', font=f, fill=0)
-    d.text((int(round(xc)), ty), c, font=f, fill=0)
-    d.text((int(round(xh2)), ty), 'H', font=f, fill=0)
+    d.text((int(round(xh1)), ty), 'H', font=f, fill=txt_gray)
+    d.text((int(round(xc)), ty), c, font=f, fill=txt_gray)
+    d.text((int(round(xh2)), ty), 'H', font=f, fill=txt_gray)
     if do2x:
         img = img.resize((img.width // 2, img.height // 2), filtro)
     gray = np.asarray(img, dtype=np.float64) / 255.0
@@ -181,23 +181,47 @@ def augment_grid(ft, rng):
 # ---------- main ----------
 
 if __name__ == '__main__':
+    import sys
+    # v2.2: eixos de exemplos duros da grade de regressao (110 casos de glifo
+    # errado): gaps mais apertados (-1.5), texto claro (gray 80 = tinta ~0.77,
+    # legivel; 130 NAO treina — fica abaixo do limiar 0.50 de run do motor) e
+    # tamanhos maiores (27-30 px). Deterministico: seed 42 fixa.
+    # Chunked: `python gen.py i` processa SO a fonte i e salva dataset-pi.npz
+    # (o sandbox mata processos em background; cada chunk cabe numa chamada).
+    # Depois: python gen.py merge  -> concatena os dataset-p*.npz em dataset.npz
     rng = np.random.default_rng(42)
-    sizes = list(range(11, 27))
-    gaps = [0.0, -0.5, -1.0, 1.0]
+
+    if len(sys.argv) > 1 and sys.argv[1] == 'merge':
+        import glob
+        partes = sorted(glob.glob(str(BASE / 'dataset-p*.npz')))
+        Xs, ys = [], []
+        for p in partes:
+            d = np.load(p)
+            Xs.append(d['X']); ys.append(d['y'])
+        X = np.concatenate(Xs); y = np.concatenate(ys)
+        np.savez_compressed(BASE / 'dataset.npz', X=X, y=y)
+        print('MERGE', len(partes), 'partes ->', X.shape, y.shape)
+        sys.exit(0)
+
+    fontes = FONTS if len(sys.argv) < 2 else [FONTS[int(a)] for a in sys.argv[1:]]
+    sizes = list(range(11, 31))
+    gaps0 = [0.0, -0.5, -1.0, -1.5, 1.0]
     bgs = [1.0, 0.95, 0.92]
     filtros = [Image.LANCZOS, Image.BOX, Image.BILINEAR]
 
     Xs, ys = [], []
     n_skip = 0; n = 0
-    for font in FONTS:
+    for font in fontes:
         for size in sizes:
             for ci, c in enumerate(CHARS):
-                for gap in gaps:
+                gaps80 = list(rng.choice(gaps0, 2, replace=False))
+                combos = [(g, 0) for g in gaps0] + [(g, 80) for g in gaps80]
+                for gap, tgray in combos:
                     do2x = rng.random() < 0.40
                     bg = bgs[rng.integers(0, len(bgs))]
                     filt = filtros[rng.integers(0, len(filtros))] if do2x else None
                     try:
-                        gray, xc, xfim = render_miniline(font, size, c, gap, bg, do2x, filt)
+                        gray, xc, xfim = render_miniline(font, size, c, gap, bg, do2x, filt, tgray)
                         ft = extrai_da_miniline(gray, xc, xfim)
                     except Exception:
                         n_skip += 1; continue
@@ -208,5 +232,9 @@ if __name__ == '__main__':
                         Xs.append(augment_grid(ft, rng).astype(np.float16)); ys.append(ci); n += 1
         print(f'{font[0]}: {n} amostras (skip {n_skip})', flush=True)
     X = np.stack(Xs); y = np.array(ys, dtype=np.int16)
-    np.savez_compressed(BASE / 'dataset.npz', X=X, y=y)
-    print('TOTAL', X.shape, y.shape, 'chars', len(CHARS))
+    if len(fontes) == 1:
+        np.savez_compressed(BASE / f'dataset-p{FONTS.index(fontes[0])}.npz', X=X, y=y)
+        print('PARCIAL', X.shape, y.shape)
+    else:
+        np.savez_compressed(BASE / 'dataset.npz', X=X, y=y)
+        print('TOTAL', X.shape, y.shape, 'chars', len(CHARS))
