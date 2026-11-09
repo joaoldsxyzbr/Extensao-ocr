@@ -4,3 +4,24 @@ Thumbs.db
 
 # Prints sintéticos: gerados por tools/gerar-prints-teste.py
 tests/print-sintetico-*.png
+
+# Treino: fontes, dataset e bins são regeneráveis (ver tools/treino/README.md)
+tools/treino/fonts/
+tools/treino/grade/
+tools/treino/grade_real/
+tools/treino/bins/
+tools/treino/bins_2x/
+tools/treino/sweep/
+tools/treino/sweep2/
+tools/treino/sweep2_2x/
+tools/treino/sweep3/
+tools/treino/sweep3_2x/
+tools/treino/sweep4/
+tools/treino/pngs/
+tools/treino/motor_velho/
+tools/treino/motor_novo/
+tools/treino/dataset.npz
+tools/treino/pesos-treino.npz
+tools/treino/fts_tmp.txt
+tools/treino/rede-ocr-v2.1.js
+__pycache__/
