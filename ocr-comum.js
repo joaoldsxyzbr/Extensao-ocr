@@ -1,26 +1,31 @@
 /*
  * ocr-comum.js — Núcleo de OCR compartilhado entre o popup e a página do extrator.
- * Versão 2.0.0: motor próprio com rede neural (MLP), SEM dependências externas —
+ * Versão 2.0.1: motor próprio com rede neural (MLP), SEM dependências externas —
  * nada de Tesseract, WASM, CDN, worker ou instalador. A imagem nunca sai do
  * navegador: ela é lida de um <canvas> e classificada por pesos embutidos.
  *
  * Depende apenas de: rede-ocr.js (REDE_OCR, pesos treinados) e parser.js
  * (ParserProdutos, extração dos itens no padrão do João).
  *
- * Pipeline (espelha a referência Python validada em linetest.py):
+ * Pipeline (espelha a referência Python validada em linetest.py, 67/67
+ * linhas corretas nas 7 variantes sintéticas do sweep):
  *   1. imagem → tinta: ink = clamp((1 - cinza - 0.15) / 0.7, 0, 1)
  *   2. limpa linhas de grade (linhas/colunas com cobertura > 60%)
  *   3. bandas de linha por projeção horizontal (mescla folgas <= 2 px)
- *   4. segmentos por projeção vertical (limiar 0.50); runs largos são
- *      divididos em "slots" de largura mediana, cortando nos vales
- *   5. espaçamento: limiar adaptativo pela maior quebra nos gaps
- *   6. features do glifo: recorte justo → 16x20 (zoom bilinear) + 3 medidas
- *      relativas à banda de linha
- *   7. TTA: 5 janelas (centro ±1, e recortes apertados) × (nítido + borrado)
- *      → média das probabilidades
- *   8. contexto: 1º token da linha só-dígitos; letra entre dígitos relida
- *      como dígito; dígito entre letras relido como letra; preferência por
- *      maiúscula (o ERP é caixa alta)
+ *   4. por banda: renormalização pelo fundo (linha azul/tinta realça traços)
+ *   5. runs por projeção vertical (limiar 0.50); pares com folga <= 1px são
+ *      fundidos se o resultado ficar <= 1.4x a mediana (glifos partidos por
+ *      subpixel)
+ *   6. runs largos (> 1.75x mediana): segmentação ótima guiada pela rede —
+ *      escolhe pelo PRODUTO das confianças TTA de TODOS os pedaços
+ *      (branch and bound), com penalidade para leituras fora de [0-9A-Z]
+ *      e para hastes estreitas lendo "1"/"I"
+ *   7. espaçamento: limiar GLOBAL por imagem, no maior salto da
+ *      distribuição de folgas (âncora 0.30 da altura da banda)
+ *   8. otimizador de janela para fragmentos (1, I, /, ...): estende até
+ *      4px sem invadir o run vizinho, adota leitura maiúscula >= 0.90
+ *   9. contexto e reparos por token (código sem espaço interno, glifo
+ *      fundido no código redividido etc.)
  */
 (function (raiz) {
   'use strict';
@@ -41,6 +46,8 @@
   const hbuf = new Float64Array(NH);
   const obuf = new Float64Array(NCLS);
   const DIGITS = '0123456789';
+  const LEGIT = new Set('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+  let DIG = null; // índices das classes de dígitos
 
   let loggerPadrao = () => {};
   function setLogger(cb) { loggerPadrao = cb || (() => {}); }
@@ -61,6 +68,11 @@
     const m = s.length >> 1;
     return (s.length & 1) ? s[m] : (s[m - 1] + s[m]) / 2;
   }
+
+  function ehDigito(c) { return c >= '0' && c <= '9'; }
+  function ehMaiuscula(c) { return c >= 'A' && c <= 'Z'; }
+  function ehMinuscula(c) { return c >= 'a' && c <= 'z'; }
+  function ehLetra(c) { return ehMaiuscula(c) || ehMinuscula(c); }
 
   /* ---------- rede neural (forward + softmax) ---------- */
 
@@ -155,7 +167,7 @@
 
   /* ---------- features de um glifo ---------- */
 
-  // strip: Float64Array (hband x SW, row-major). Devolve ft(323) ou null.
+  // strip: banda da linha (y0..y1) do ink global. Devolve ft(323) ou null.
   function featuresDoGlifo(ink, w, y0, hband, x0, x1) {
     let gy0 = -1, gy1 = -1, gx0 = -1, gx1 = -1;
     for (let y = 0; y < hband; y++) {
@@ -190,35 +202,48 @@
     return ft;
   }
 
-  /* ---------- pipeline de linhas ---------- */
+  /* ---------- probabilidade média de uma janela (TTA) ---------- */
 
-  // zera linhas/colunas de grade no ink contínuo (cobertura > 60% a ink>0.30)
-  function limparGradeInk(ink, w, h) {
-    const rows = [], cols = [];
-    for (let y = 0; y < h; y++) {
-      let n = 0;
-      for (let x = 0; x < w; x++) if (ink[y * w + x] > 0.30) n++;
-      if (n / w > 0.6) rows.push(y);
+  // TTA: 5 janelas (centro, ±1 e recortes apertados) x (nítido + borrado).
+  // tta=false: janela única nítida. Devolve Float64Array(NCLS) ou null.
+  function probasJanela(ink, w, y0, hband, w0, w1, tta) {
+    const SW = w;
+    let janelas;
+    if (tta !== false) {
+      janelas = [[w0, w1], [Math.max(0, w0 - 1), w1], [w0, Math.min(SW, w1 + 1)]];
+      if (w1 - w0 >= 4) {
+        janelas.push([w0 + 1, w1]);
+        janelas.push([w0, w1 - 1]);
+      }
+    } else {
+      janelas = [[w0, w1]];
     }
-    for (let x = 0; x < w; x++) {
-      let n = 0;
-      for (let y = 0; y < h; y++) if (ink[y * w + x] > 0.30) n++;
-      if (n / h > 0.6) cols.push(x);
+    const gridB = new Float64Array(GH * GW);
+    let soma = null, n = 0;
+    for (const [a0, a1] of janelas) {
+      if (a1 <= a0) continue;
+      const ft = featuresDoGlifo(ink, w, y0, hband, a0, a1);
+      if (!ft) continue;
+      if (!soma) soma = new Float64Array(NCLS);
+      let q = prever(ft);
+      for (let k = 0; k < NCLS; k++) soma[k] += q[k];
+      n++;
+      const fb = Float64Array.from(ft);
+      blurGrid(ft, gridB);
+      fb.set(gridB, 0);
+      q = prever(fb);
+      for (let k = 0; k < NCLS; k++) soma[k] += q[k];
+      n++;
     }
-    for (const y of rows) {
-      const a = Math.max(0, y - 1), b = Math.min(h, y + 2);
-      for (let yy = a; yy < b; yy++) for (let x = 0; x < w; x++) ink[yy * w + x] = 0;
-    }
-    for (const x of cols) {
-      const a = Math.max(0, x - 1), b = Math.min(w, x + 2);
-      for (let y = 0; y < h; y++) for (let xx = a; xx < b; xx++) ink[y * w + xx] = 0;
-    }
+    if (!soma) return null;
+    for (let k = 0; k < NCLS; k++) soma[k] /= n;
+    return soma;
   }
 
-  // binário sem as linhas de grade (para achar bandas de linha)
-  function binarioSemGrades(ink, w, h) {
-    const bink = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) bink[i] = ink[i] > 0.30 ? 1 : 0;
+  /* ---------- grade e bandas ---------- */
+
+  // linhas/colunas com cobertura > 60% no binário dado
+  function grausBink(bink, w, h) {
     const rows = [], cols = [];
     for (let y = 0; y < h; y++) {
       let n = 0;
@@ -230,15 +255,25 @@
       for (let y = 0; y < h; y++) if (bink[y * w + x]) n++;
       if (n / h > 0.6) cols.push(x);
     }
-    for (const y of rows) {
-      const a = Math.max(0, y - 1), b = Math.min(h, y + 2);
-      for (let yy = a; yy < b; yy++) bink.fill(0, yy * w, yy * w + w);
+    return { rows, cols };
+  }
+
+  // zera (±1) as linhas/colunas de grade no array dado (linhas já relativas)
+  function zerarGradeEm(a, w, h, rows, cols) {
+    for (const r of rows) {
+      const y0 = Math.max(0, r - 1), y1 = Math.min(h, r + 2);
+      for (let y = y0; y < y1; y++) {
+        const base = y * w;
+        for (let x = 0; x < w; x++) a[base + x] = 0;
+      }
     }
-    for (const x of cols) {
-      const a = Math.max(0, x - 1), b = Math.min(w, x + 2);
-      for (let y = 0; y < h; y++) bink.fill(0, y * w + a, y * w + b);
+    for (const c of cols) {
+      const x0 = Math.max(0, c - 1), x1 = Math.min(w, c + 2);
+      for (let y = 0; y < h; y++) {
+        const base = y * w;
+        for (let x = x0; x < x1; x++) a[base + x] = 0;
+      }
     }
-    return bink;
   }
 
   function bandasLinha(bink, w, h) {
@@ -264,8 +299,10 @@
     return mescladas.filter((b) => b[1] - b[0] >= 5 && b[1] - b[0] <= 90);
   }
 
-  // segmentos de uma banda: runs (limiar 0.50), divisão por slots e espaços
-  function segmentos(ink, w, y0, y1) {
+  /* ---------- runs de uma banda (com DP de segmentação) ---------- */
+
+  // ink: Float64Array global; banda [y0, y1)
+  function runsDe(ink, w, y0, y1) {
     const hband = y1 - y0;
     const colink = new Int32Array(w);
     for (let x = 0; x < w; x++) {
@@ -281,191 +318,425 @@
     }
     if (ini >= 0) runs.push([ini, w]);
 
-    // divide runs largos demais em vales de tinta (recursivo)
-    if (runs.length) {
-      const med = median(runs.map((r) => r[1] - r[0]));
-      const limiteL = Math.max(5, pyRound(1.5 * med));
-      const dividir = (r) => {
+    // funde pares com folga <= 1px se o resultado for curto (<= 1.4x mediana):
+    // glifos redondos partidos por subpixel voltam a ser um run; pares de
+    // letras reais somam ~2x a mediana e não podem fundir
+    const med0 = runs.length ? median(runs.map((r) => r[1] - r[0])) : 1.0;
+    const fundidos = [];
+    for (const r of runs) {
+      if (fundidos.length && r[0] - fundidos[fundidos.length - 1][1] <= 1 &&
+          (r[1] - fundidos[fundidos.length - 1][0]) <= 1.4 * med0) {
+        fundidos[fundidos.length - 1][1] = r[1];
+      } else fundidos.push([r[0], r[1]]);
+    }
+    runs = fundidos;
+
+    const larguras = runs.map((r) => r[1] - r[0]);
+    if (larguras.length) {
+      const med = median(larguras);
+      const limiteL = Math.max(5, pyRound(1.75 * med));
+
+      // score de um pedaço: confiança TTA média x penalidade de legitimidade.
+      // TTA é essencial: um corte errado pode ler com confiança altíssima na
+      // janela exata (meio-zero lendo "3" com 0.9996) mas desmancha com
+      // deslocamentos de 1px (0.58); o conteúdo do ERP é só [0-9A-Z],
+      // pedaços que leem pontuação ou minúscula recebem fator 0.7.
+      const memo = new Map();
+      function confRun(x0, x1) {
+        const key = x0 * 100000 + x1;
+        let m = memo.get(key);
+        if (m) return m;
+        const p = probasJanela(ink, w, y0, hband, x0, x1, true);
+        if (!p) { m = { v: 0.0, ch: '' }; memo.set(key, m); return m; }
+        let k = 0;
+        for (let i = 1; i < NCLS; i++) if (p[i] > p[k]) k = i;
+        let v = p[k];
+        if (!LEGIT.has(CHARS[k])) v *= 0.7;
+        m = { v, ch: CHARS[k] };
+        memo.set(key, m);
+        return m;
+      }
+
+      // segmentação ótima guiada pela rede: um fragmento legítimo (haste de
+      // T lida "1" com conf 1.000) pode ter confiança MAIOR que o glifo
+      // certo ("T" 0.9999), e o primeiro corte errado envenena o resto.
+      // Escolhe pelo PRODUTO das confianças de TODOS os pedaços
+      // (branch and bound: cortes ordenados por confiança, só desce na
+      // recursão onde o produto ainda pode vencer o melhor já encontrado)
+      function dividir(r, depth) {
         const rw = r[1] - r[0];
-        if (rw <= limiteL) return [r];
+        if (rw <= limiteL || depth >= 8) {
+          return { partes: [r], score: confRun(r[0], r[1]).v };
+        }
         const n = Math.max(2, pyRound(rw / Math.max(med, 1)));
         const slot = rw / n;
-        const cortes = [];
-        for (let k = 1; k < n; k++) {
-          const c0 = Math.max(1, Math.floor(slot * k - slot * 0.35));
-          const c1 = Math.max(c0 + 1, Math.min(rw - 1, Math.floor(slot * k + slot * 0.35) + 1));
-          let melhor = c0;
-          for (let i = c0 + 1; i < c1; i++) if (colink[r[0] + i] < colink[r[0] + melhor]) melhor = i;
-          const corte = melhor;
-          if (cortes.length && corte <= cortes[cortes.length - 1]) continue;
-          cortes.push(corte);
+        const c0 = Math.max(1, Math.trunc(slot * 0.45));
+        const c1 = Math.max(c0 + 1, Math.min(rw - 1, Math.trunc(slot * 1.6) + 1));
+        const cands = [];
+        for (let c = c0; c < Math.min(c1, rw - 1); c++) {
+          if (r[1] - (r[0] + c + 1) < 3) continue;
+          const m = confRun(r[0], r[0] + c);
+          let cc = m.v;
+          // haste de T/G cortada lê "1" com confiança alta; um "1" real tem
+          // side bearings e quase nunca funde com vizinhos. Peça estreita
+          // (<0.65 slot) lendo 1/I é quase sempre fragmento: penalidade leve
+          if ((m.ch === '1' || m.ch === 'I') && c < 0.65 * slot) cc *= 0.85;
+          if (cc >= 0.55) cands.push([cc, c]);
         }
-        if (!cortes.length) return [r];
-        const partes = [];
-        let inicio = 0;
-        for (const c of cortes.concat([rw])) {
-          if (c - inicio >= 2) partes.push([r[0] + inicio, r[0] + c]);
-          inicio = c + 1;
+        // ordem do Python: sort(reverse=True) sobre (cc, c)
+        cands.sort((a, b) => (b[0] - a[0]) || (b[1] - a[1]));
+        let melhor = null, melhorScore = -1.0;
+        for (const [cc, c] of cands) {
+          if (cc <= melhorScore) break; // o produto só diminui
+          const { partes: resto, score: rp } = dividir([r[0] + c + 1, r[1]], depth + 1);
+          if (rp < 0.55) continue;
+          const score = cc * rp;
+          if (score > melhorScore) {
+            melhorScore = score;
+            melhor = [[r[0], r[0] + c]].concat(resto);
+          }
         }
-        if (inicio < rw) partes.push([r[0] + inicio, r[1]]);
-        let out = [];
-        for (const p of partes) out = out.concat(dividir(p));
-        return out;
-      };
-      let saida = [];
-      for (const r of runs) saida = saida.concat(dividir(r));
+        if (!melhor) return { partes: [r], score: confRun(r[0], r[1]).v };
+        return { partes: melhor, score: melhorScore };
+      }
+
+      const saida = [];
+      for (const r of runs) {
+        const { partes, score } = dividir(r, 0);
+        saida.push(...(score < 0.55 ? [r] : partes));
+      }
       runs = saida;
     }
 
-    // espaços: limiar adaptativo pela maior quebra na distribuição de gaps
-    let gaps = [];
-    for (let j = 1; j < runs.length; j++) {
-      const g = runs[j][0] - runs[j - 1][1];
-      if (g <= hband) gaps.push(g);
-    }
-    let gapEsp = Math.max(3, pyRound(0.34 * hband));
-    if (gaps.length) {
-      const u = Array.from(new Set(gaps)).sort((a, b) => a - b);
-      let melhorDiff = -1, melhorMp = 0;
-      for (let i = 0; i + 1 < u.length; i++) {
-        const a = u[i], b = u[i + 1];
-        if ((b - a) >= melhorDiff) { melhorDiff = b - a; melhorMp = (a + b) / 2; }
-      }
-      gapEsp = Math.max(3, Math.min(Math.floor(melhorMp + 0.5), hband));
-    }
-
-    const toks = [];
-    for (let j = 0; j < runs.length; j++) {
-      if (j > 0 && runs[j][0] - runs[j - 1][1] >= gapEsp) toks.push(' ');
-      toks.push(runs[j]);
-    }
-    return { hband, toks };
+    const gaps = [];
+    for (let j = 1; j < runs.length; j++) gaps.push(runs[j][0] - runs[j - 1][1]);
+    return { hband, runs, gaps };
   }
 
-  /* ---------- reconhecimento de linhas ---------- */
+  /* ---------- limiar de espaço global ---------- */
 
-  // ink: Float64Array (h * w, row-major), valores 0..1
-  function reconhecerInk(ink, w, h) {
-    limparGradeInk(ink, w, h);
-    const bink = binarioSemGrades(ink, w, h);
+  function limiarEspaco(dados) {
+    const gaps = [];
+    for (const { hband, gaps: gl } of dados) {
+      for (const g of gl) if (g <= 0.75 * hband) gaps.push(g);
+    }
+    if (!gaps.length) return null;
+    const u = Array.from(new Set(gaps)).sort((a, b) => a - b);
+    const ancoras = dados.map((d) => Math.max(3, pyRound(0.30 * d.hband)));
+    const ancora = ancoras.length ? median(ancoras) : 4.0;
+    let melhorMp = null, melhorSalto = 0, melhorD = 1e9;
+    for (let i = 0; i + 1 < u.length; i++) {
+      const a = u[i], b = u[i + 1];
+      const salto = b - a;
+      const mp = (a + b) / 2.0;
+      const d = Math.abs(mp - ancora);
+      if (salto > melhorSalto || (salto === melhorSalto && d < melhorD - 1e-9)) {
+        melhorSalto = salto; melhorMp = mp; melhorD = d;
+      }
+    }
+    return melhorMp;
+  }
+
+  /* ---------- reconhecimento ---------- */
+
+  // gray: valores 0..1 (Float64Array/Float32Array, w*h row-major)
+  function reconhecerGray(gray, w, h) {
+    if (DIG === null) {
+      DIG = [];
+      for (let i = 0; i < NCLS; i++) if (ehDigito(CHARS[i])) DIG.push(i);
+    }
+    const ink = new Float64Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      let v = (1 - gray[i] - 0.15) / 0.7;
+      ink[i] = v < 0 ? 0 : (v > 1 ? 1 : v);
+    }
+
+    // grade: linhas/colunas com cobertura > 60% (a ink > 0.30)
+    const g1 = grausBink((function () {
+      const b = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) b[i] = ink[i] > 0.30 ? 1 : 0;
+      return b;
+    })(), w, h);
+    const gRows = g1.rows, gCols = g1.cols;
+    zerarGradeEm(ink, w, h, gRows, gCols);
+
+    // binário sem grades para achar as bandas
+    const bink = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) bink[i] = ink[i] > 0.30 ? 1 : 0;
+    const g2 = grausBink(bink, w, h);
+    zerarGradeEm(bink, w, h, g2.rows, g2.cols);
+
     const bandas = bandasLinha(bink, w, h);
-    const linhas = [], confs = [];
-    const gridB = new Float64Array(GH * GW);
 
+    // por banda: renormaliza pelo fundo (linha azul/tinta realça traços no ink)
+    const bandVals = new Float64Array(w * 90);
     for (const [y0, y1] of bandas) {
-      const { hband, toks } = segmentos(ink, w, y0, y1);
-      const glifos = [];  // { c, p, ti }
+      const hband = y1 - y0;
+      let n = 0;
+      for (let y = y0; y < y1; y++) {
+        const base = y * w;
+        for (let x = 0; x < w; x++) bandVals[n++] = gray[base + x];
+      }
+      const s = Array.from(bandVals.subarray(0, n)).sort((a, b) => a - b);
+      const pos = 0.9 * (n - 1);
+      const lo = Math.min(n - 1, Math.floor(pos));
+      const hi = Math.min(n - 1, lo + 1);
+      const bg = s[lo] + (pos - lo) * (s[hi] - s[lo]);
+      if (bg < 0.995) {
+        const nova = new Float64Array(hband * w);
+        for (let y = 0; y < hband; y++) {
+          const base = (y0 + y) * w;
+          for (let x = 0; x < w; x++) {
+            let v = (1 - gray[base + x] / bg - 0.15) / 0.7;
+            nova[y * w + x] = v < 0 ? 0 : (v > 1 ? 1 : v);
+          }
+        }
+        // zera as grades dentro da banda (linhas relativas)
+        const rowsRel = [];
+        for (const r of gRows) if (r >= y0 && r < y1) rowsRel.push(r - y0);
+        zerarGradeEm(nova, w, hband, rowsRel, gCols);
+        ink.set(nova, y0 * w);
+      }
+    }
+
+    // passada 1: runs por banda; passada 2: espaços com limiar global
+    const dados = bandas.map(([y0, y1]) => runsDe(ink, w, y0, y1));
+    const mp = limiarEspaco(dados);
+
+    const linhas = [], confs = [];
+    for (let bi = 0; bi < bandas.length; bi++) {
+      const [y0, y1] = bandas[bi];
+      const { hband, runs } = dados[bi];
+      let gapEsp = 3;
+      if (mp !== null) {
+        gapEsp = Math.max(3, Math.min(Math.floor(mp + 0.5), Math.trunc(0.6 * hband)));
+      }
+      const SW = w;
+      const toks = [];
+      for (let j = 0; j < runs.length; j++) {
+        if (j > 0 && runs[j][0] - runs[j - 1][1] >= gapEsp) toks.push(' ');
+        toks.push(runs[j]);
+      }
+
+      const glifos = []; // { c, p, ti, rf }
       const cfs = [];
       let primeira = true, tokIdx = 0;
 
       for (const t of toks) {
         if (t === ' ') {
-          glifos.push({ c: ' ', p: null, ti: -1 });
+          glifos.push({ c: ' ', p: null, ti: -1, rf: null });
           primeira = false;
           tokIdx++;
           continue;
         }
-        // TTA: mesmas janelas da referência (centro, ±1, e recortes apertados)
-        const wx0 = Math.max(0, t[0] - 1);
-        const wx1 = Math.min(w, t[1] + 1);
-        const janelas = [[t[0], t[1]], [wx0, t[1]], [t[0], wx1]];
-        if (t[1] - t[0] >= 4) {
-          janelas.push([t[0] + 1, t[1]]);
-          janelas.push([t[0], t[1] - 1]);
+        let p = probasJanela(ink, w, y0, hband, t[0], t[1], true);
+        if (!p) continue;
+        let runF = [t[0], t[1]];
+
+        // otimização de janela para FRAGMENTOS: se a leitura base é um glifo
+        // fino cortado (1, I, parenteses, barra...), a ponta anti-alias de
+        // uma barra pode ter caído abaixo do limiar 0.50 e "vazado" para o
+        // gap; esticar a janela recupera o glifo inteiro (T lido como 1 -> T).
+        // A janela estendida não pode invadir o run vizinho (senão I + perna
+        // do A vizinho lê "L"). Glifos normais não esticam: mais largos leem
+        // outra classe com confiança maior (0 vira O).
+        let kbase = 0;
+        for (let i = 1; i < NCLS; i++) if (p[i] > p[kbase]) kbase = i;
+        if ('1I()/\\ti'.indexOf(CHARS[kbase]) >= 0 && p[kbase] < 0.99) {
+          let melhorP = p, melhorJ = runF;
+          let vizEsq = 0, vizDir = SW;
+          for (const rr of runs) {
+            if (rr[1] <= t[0] && rr[1] > vizEsq) vizEsq = rr[1];
+            if (rr[0] >= t[1] && rr[0] < vizDir) vizDir = rr[0];
+          }
+          const cands = [];
+          for (let e = 1; e < 5; e++) {
+            if (t[0] - e >= vizEsq) cands.push([t[0] - e, t[1]]);
+            if (t[1] + e <= vizDir) cands.push([t[0], t[1] + e]);
+          }
+          for (const [a0, a1] of cands) {
+            const pe = probasJanela(ink, w, y0, hband, a0, a1, false);
+            if (!pe) continue;
+            let ke = 0;
+            for (let i = 1; i < NCLS; i++) if (pe[i] > pe[ke]) ke = i;
+            const ce = CHARS[ke];
+            if (ehMaiuscula(ce) && pe[ke] >= 0.90 && pe[ke] > p[kbase] + 0.02) {
+              melhorP = pe; melhorJ = [a0, a1];
+            }
+          }
+          if (melhorJ[0] !== runF[0] || melhorJ[1] !== runF[1]) {
+            p = melhorP;
+            runF = melhorJ;
+          }
         }
-        const ps = [];
-        for (const [ax0, ax1] of janelas) {
-          const ft = featuresDoGlifo(ink, w, y0, hband, ax0, ax1);
-          if (!ft) continue;
-          ps.push(prever(ft));
-          blurGrid(ft, gridB); // borra só o grid 16x20; as 3 medidas ficam
-          const fb = Float64Array.from(ft);
-          fb.set(gridB, 0);
-          ps.push(prever(fb));
-        }
-        if (!ps.length) continue;
-        const p = new Float64Array(NCLS);
-        for (const q of ps) for (let k = 0; k < NCLS; k++) p[k] += q[k];
-        for (let k = 0; k < NCLS; k++) p[k] /= ps.length;
 
         let k;
         if (primeira) {
           // primeiro token da linha = código do produto: só dígitos
           k = -1;
-          for (let i = 0; i < NCLS; i++) {
-            if (DIGITS.indexOf(CHARS[i]) < 0) continue;
-            if (k < 0 || p[i] > p[k]) k = i;
-          }
+          for (const i of DIG) if (k < 0 || p[i] > p[k]) k = i;
         } else {
           k = 0;
           for (let i = 1; i < NCLS; i++) if (p[i] > p[k]) k = i;
           const c = CHARS[k];
           // o ERP é caixa alta: entre minúscula e maiúscula parecidas,
           // prefere a maiúscula com probabilidade razoável
-          if (c >= 'a' && c <= 'z') {
+          if (ehMinuscula(c)) {
             const ku = CHARS.indexOf(c.toUpperCase());
             if (ku >= 0 && p[ku] >= 0.4 * p[k]) k = ku;
           }
         }
-        glifos.push({ c: CHARS[k], p, ti: tokIdx });
+        glifos.push({ c: CHARS[k], p, ti: tokIdx, rf: runF });
         cfs.push(p[k]);
       }
 
-      // regras de contexto entre glifos do mesmo token
+      /* regras de contexto entre glifos do mesmo token */
       for (let j = 0; j < glifos.length; j++) {
         const g = glifos[j];
         if (!g.p) continue;
-        if (DIGITS.indexOf(g.c) >= 0) {
+        const ti = g.ti;
+        const antes = (j > 0 && glifos[j - 1].ti === ti) ? glifos[j - 1].c : null;
+        const depois = (j + 1 < glifos.length && glifos[j + 1].ti === ti) ? glifos[j + 1].c : null;
+
+        if (ehDigito(g.c)) {
           // dígito entre duas letras maiúsculas do mesmo token → reler como letra
-          const antes = (j > 0 && glifos[j - 1].ti === g.ti) ? glifos[j - 1].c : null;
-          let depois = null;
-          if (j + 1 < glifos.length && glifos[j + 1].ti === g.ti) depois = glifos[j + 1].c;
-          if (antes && depois && antes >= 'A' && antes <= 'Z' && depois >= 'A' && depois <= 'Z') {
+          if (antes && depois && ehLetra(antes) && ehLetra(depois) &&
+              !ehMinuscula(antes) && !ehMinuscula(depois)) {
             let kl = -1;
             for (let i = 0; i < NCLS; i++) {
-              const c = CHARS[i];
-              if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) continue;
+              if (!ehLetra(CHARS[i])) continue;
               if (kl < 0 || g.p[i] > g.p[kl]) kl = i;
             }
             if (kl >= 0 && g.p[kl] > 0.30) g.c = CHARS[kl];
           }
           continue;
         }
-        // letra entre dígitos do mesmo token → reler como dígito
-        const antesG = (j > 0 && glifos[j - 1].ti === g.ti) ? glifos[j - 1].c : null;
-        let depoisG = null;
-        for (let q = j + 1; q < glifos.length && glifos[q].ti === g.ti; q++) {
-          if (DIGITS.indexOf(glifos[q].c) >= 0) { depoisG = glifos[q].c; break; }
-        }
-        if (antesG && DIGITS.indexOf(antesG) >= 0 && depoisG) {
-          let kd = -1;
-          for (let i = 0; i < NCLS; i++) {
-            if (DIGITS.indexOf(CHARS[i]) < 0) continue;
-            if (kd < 0 || g.p[i] > g.p[kd]) kd = i;
+        // O/o colado em dígito no mesmo token é quase sempre um 0 mal lido
+        // (500G -> 5ooG); palavras reais raramente têm O vizinho de dígito
+        if (g.c === 'O' || g.c === 'o') {
+          if (((antes && ehDigito(antes)) || (depois && ehDigito(depois))) &&
+              g.p[CHARS.indexOf('0')] >= 0.10 * g.p[CHARS.indexOf(g.c)]) {
+            g.c = '0';
           }
-          if (kd >= 0) g.c = CHARS[kd];
+          continue;
+        }
+        // letra entre dígitos do mesmo token → reler como dígito
+        if (antes && ehDigito(antes)) {
+          let depoisG = null;
+          for (let q = j + 1; q < glifos.length && glifos[q].ti === ti; q++) {
+            if (ehDigito(glifos[q].c)) { depoisG = glifos[q].c; break; }
+          }
+          if (depoisG !== null) {
+            let kd = -1;
+            for (const i of DIG) if (kd < 0 || g.p[i] > g.p[kd]) kd = i;
+            if (kd >= 0) g.c = CHARS[kd];
+          }
         }
       }
 
-      const txt = glifos.map((g) => g.c).join('').replace(/\s+$/, '');
-      linhas.push(txt.trim());
+      /* ---- reparos por token ---- */
+      const tokensDe = (gs) => {
+        const tts = [];
+        let cur = [];
+        for (let gi = 0; gi < gs.length; gi++) {
+          if (gs[gi].c === ' ') { tts.push(cur); cur = []; }
+          else cur.push(gi);
+        }
+        tts.push(cur);
+        return tts;
+      };
+      const popEspacoAntes = (idx) => {
+        for (let gi = idx - 1; gi >= 0; gi--) {
+          if (glifos[gi].c === ' ') { glifos.splice(gi, 1); return; }
+        }
+      };
+
+      // código (token 0) não tem espaço interno: se um falso espaço o partiu
+      // em tokens só de dígitos, junta de volta
+      for (let round = 0; round < 3; round++) {
+        const tts = tokensDe(glifos);
+        if (tts.length >= 2 && tts[0].length && tts[1].length &&
+            tts[0].every((i) => ehDigito(glifos[i].c)) &&
+            tts[1].every((i) => ehDigito(glifos[i].c))) {
+          popEspacoAntes(tts[1][0]);
+        } else break;
+      }
+
+      // token de UMA letra colado em token anterior terminado em letra:
+      // gap de I/1 tem tamanho de palavra, mas palavra de uma letra não
+      // existe nessas descrições -> junta
+      for (let round = 0; round < 4; round++) {
+        const tts = tokensDe(glifos);
+        let feito = false;
+        for (let t = 1; t < tts.length; t++) {
+          if (tts[t].length === 1 && ehLetra(glifos[tts[t][0]].c) &&
+              tts[t - 1].length >= 2 && ehLetra(glifos[tts[t - 1][tts[t - 1].length - 1]].c)) {
+            popEspacoAntes(tts[t][0]);
+            feito = true;
+            break;
+          }
+        }
+        if (!feito) break;
+      }
+
+      // token 0 (código): glifo dígito mais largo que 1.3x a mediana dos
+      // dígitos é provavelmente um par fundido (74 -> 2); redivide com
+      // verificação dígito-only da rede
+      const confDig = (x0, x1) => {
+        const pdg = probasJanela(ink, w, y0, hband, x0, x1, false);
+        if (!pdg) return { ch: null, cc: 0.0 };
+        let k = 0;
+        for (let i = 1; i < DIG.length; i++) if (pdg[DIG[i]] > pdg[DIG[k]]) k = i;
+        return { ch: CHARS[DIG[k]], cc: pdg[DIG[k]] };
+      };
+      const splitDig = (x0, x1, depth) => {
+        const wd = x1 - x0;
+        if (wd < 5 || depth >= 6) return null;
+        let melhorC = -1, melhorCc = -1.0, melhorCh = null;
+        const cmin = Math.max(2, Math.trunc(wd * 0.3));
+        const cmax = Math.min(wd - 2, Math.trunc(wd * 0.7));
+        for (let c = cmin; c <= cmax; c++) {
+          const { ch, cc } = confDig(x0, x0 + c);
+          if (cc > melhorCc) { melhorCc = cc; melhorC = c; melhorCh = ch; }
+        }
+        if (melhorC < 0 || melhorCc < 0.6) return null;
+        let resto = splitDig(x0 + melhorC + 1, x1, depth + 1);
+        if (!resto) {
+          const { ch: ch2, cc: cc2 } = confDig(x0 + melhorC + 1, x1);
+          if (ch2 === null || cc2 < 0.6 || (x1 - (x0 + melhorC + 1)) < 2) return null;
+          resto = [[ch2, [x0 + melhorC + 1, x1]]];
+        }
+        return [[melhorCh, [x0, x0 + melhorC]]].concat(resto);
+      };
+
+      for (let round = 0; round < 2; round++) {
+        const tts = tokensDe(glifos);
+        if (!tts.length || !tts[0].length) break;
+        const idx0 = tts[0];
+        if (!idx0.every((i) => ehDigito(glifos[i].c))) break;
+        const larg = idx0.map((i) => glifos[i].rf[1] - glifos[i].rf[0]);
+        if (larg.length < 2) break;
+        const med0 = median(larg);
+        let alvo = -1;
+        for (const i of idx0) {
+          const wd = glifos[i].rf[1] - glifos[i].rf[0];
+          if (wd > 1.3 * med0 && wd >= med0 + 3) { alvo = i; break; }
+        }
+        if (alvo < 0) break;
+        const partes = splitDig(glifos[alvo].rf[0], glifos[alvo].rf[1], 0);
+        if (!partes) break;
+        const novos = partes.map(([ch, run]) => ({ c: ch, p: glifos[alvo].p, ti: 0, rf: run }));
+        glifos.splice(alvo, 1, ...novos);
+      }
+
+      const txt = glifos.map((g) => g.c).join('').trim();
+      linhas.push(txt);
       confs.push(cfs.length ? cfs.reduce((a, b) => a + b, 0) / cfs.length : 0);
     }
     return { linhas, confs };
   }
 
   /* ---------- API pública ---------- */
-
-  // gray: Uint8ClampedArray ou Uint8Array (comprimento w*h), 0..255
-  function reconhecerGray(gray, w, h) {
-    const ink = new Float64Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      const g = gray[i] / 255;
-      let v = (1 - g - 0.15) / 0.7;
-      ink[i] = v < 0 ? 0 : (v > 1 ? 1 : v);
-    }
-    return reconhecerInk(ink, w, h);
-  }
 
   /* extrairDeArquivo(arquivo) → { itens, texto, confianca }
      itens = [{ codigo, descricao, linha }] no padrão do João. */
@@ -479,10 +750,10 @@
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
     const d = ctx.getImageData(0, 0, w, h).data;
-    const gray = new Uint8Array(w * h);
+    const gray = new Float64Array(w * h);
     for (let i = 0; i < w * h; i++) {
       const j = i * 4;
-      gray[i] = (d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114) | 0;
+      gray[i] = (d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114) / 255;
     }
     const { linhas, confs } = reconhecerGray(gray, w, h);
     const texto = linhas.join('\n');
@@ -498,7 +769,6 @@
   if (typeof raiz.OCR_TESTES !== 'undefined') {
     // pontos de entrada para os testes automatizados (Node), sem afetar a extensão
     api._reconhecerGray = reconhecerGray;
-    api._reconhecerInk = reconhecerInk;
   }
   raiz.OCRComum = api;
 })(typeof self !== 'undefined' ? self : this);
