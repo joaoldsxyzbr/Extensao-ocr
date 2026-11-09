@@ -1,4 +1,4 @@
-# Extrator de Produtos (OCR) — v2.1.0
+# Extrator de Produtos (OCR) — v2.2.0
 
 Extensão Chrome (Manifest V3) que lê prints de telas de ERP e extrai a lista de
 produtos no padrão:
@@ -68,6 +68,15 @@ fundo azul (sem grade). Linhas inteiras corretas, incluindo espaços:
 | Tabela com linha azul, 21 px | 9/9 |
 | Tabela com linha azul, 23 px | 9/9 |
 | Tabela com linha azul, 21 px + desfoque | 9/9 |
+
+### v2.2.0 — retreino de robustez (hard-example mining)
+
+Dataset 2,2× maior (420 mil amostras: texto claro, gaps até -1,5 px, tamanhos
+até 30 px, 12 variantes de fonte). Val acc 99,60% (era 99,38%). A grade de
+regressão (140 prints sintéticos) manteve a MESMA nota — 20/140 verdes,
+0 regressões, saída idêntica — provando que o classificador não é mais o
+gargalo: os erros restantes são do motor (segmentação, espaços, contraste).
+Plano do motor: `docs/specs/2026-11-10-motor-ocr-design.md`.
 
 ### v2.1.0 — robustez a glifos apertados e anti-aliasing
 
