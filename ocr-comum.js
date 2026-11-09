@@ -149,7 +149,17 @@ const OCRComum = (function () {
         opcoes.langPath = CDN_LANG;
         if (o.lang === 'cdn') opcoes.cacheMethod = 'refresh';
 
-        return Tesseract.createWorker('por', Tesseract.OEM.LSTM_ONLY, opcoes);
+        const worker = await Tesseract.createWorker('por', Tesseract.OEM.LSTM_ONLY, opcoes);
+        /* Print de tela é um bloco único de texto (linhas de uma tabela/grade).
+           O PSM padrão do Tesseract (3, automático) fragmenta a página em blocos
+           e perde linhas inteiras (homologação 09/11: 3 de 10 lidas). PSM 6 =
+           bloco uniforme, lê linha a linha; preserve_interword_spaces mantém
+           código e descrição na mesma linha. */
+        await worker.setParameters({
+          tessedit_pageseg_mode: '6',
+          preserve_interword_spaces: '1',
+        });
+        return worker;
       })().catch((e) => { workerPronto = null; throw e; });
     }
     return workerPronto;
