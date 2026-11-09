@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Extrator de Produtos (OCR)",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Extrai código + descrição de produtos de prints com OCR 100% local (Tesseract LSTM) e monta no padrão 'CÓDIGO DESCRIÇÃO UN'.",
   "permissions": ["storage", "activeTab", "contextMenus", "clipboardWrite", "clipboardRead"],
   "host_permissions": [
