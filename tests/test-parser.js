@@ -68,5 +68,44 @@ caso('deduplica código+descrição', `
 104527 BEBIDA LACTEA PARMALAT FIT FLEX 250ML UN
 `, ['104527 BEBIDA LACTEA PARMALAT FIT FLEX 250ML UN']);
 
+// Códigos de tamanhos variados (ERP do João: códigos de 1 a 8 dígitos).
+caso('código de 1 dígito', '7 BANANA PRATA KG', ['7 BANANA PRATA KG']);
+caso('código de 2 dígitos', '82 ABACATE KG', ['82 ABACATE KG']);
+caso('código de 3 dígitos', '282 ABACATE KG', ['282 ABACATE KG']);
+
+// Print hortifruti (representativo): 11 produtos, códigos de 3 a 4 dígitos.
+caso('hortifruti com códigos curtos', `
+282 ABACATE KG
+286 BANANA PRATA KG
+292 LARANJA BAHIA KG
+296 MAMAO UN
+318 MORANGO CX
+444 BATATA KG
+446 CEBOLA KG
+533 COUVE FLOR UN
+715 TOMATE SALADA KG
+815 ALHO PORO UN
+1083 ABACAXI PEROLA UN
+`, [
+  '282 ABACATE KG', '286 BANANA PRATA KG', '292 LARANJA BAHIA KG', '296 MAMAO UN',
+  '318 MORANGO CX', '444 BATATA KG', '446 CEBOLA KG', '533 COUVE FLOR UN',
+  '715 TOMATE SALADA KG', '815 ALHO PORO UN', '1083 ABACAXI PEROLA UN'
+]);
+
+// "quantidade + unidade" sozinha não é produto.
+caso('quantidade+unidade não vira produto', `
+282 ABACATE KG
+3 CX
+296 MAMAO UN
+`, ['282 ABACATE KG', '296 MAMAO UN']);
+
+// Numeração de linha antes de código curto: o último token numérico é o código.
+caso('numeração antes do código curto', '1 1083 ABACAXI PEROLA UN',
+  ['1083 ABACAXI PEROLA UN']);
+
+// Quantidade no fim da linha é descartada da descrição.
+caso('quantidade no fim é descartada', '1083 ABACAXI PEROLA UN 3',
+  ['1083 ABACAXI PEROLA UN']);
+
 console.log(`\n${total - falhas}/${total} testes passaram`);
 process.exit(falhas ? 1 : 0);
