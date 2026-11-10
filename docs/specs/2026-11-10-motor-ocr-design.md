@@ -1,7 +1,7 @@
 # Spec de design: motor OCR v2.3 — segmentação adaptativa
 
 Data: 2026-11-10
-Status: rascunho (aguarda OK do João)
+Status: APROVADA pelo João (10/11/2026) — decisões 1, 3*, em andamento
 Classificação: mudança arquitetural (motor `ocr-comum.js`)
 
 ## Problema
@@ -54,3 +54,28 @@ restantes são do motor, em três famílias:
   complementar + slot largo), não em todo run.
 - **Histerese de espaço**: pode colar palavras em fonte larga → o gate tem
   casos de espaço nos dois sentidos (colado e espaçado) e reprova.
+## Instrumentação (passo 1, 10/11/2026) — achados no print real
+
+O print real do hortifruti (`prints/hortifruti.png`, crop 277x114, fonte ~8 px
+de banda) reproduziu AO VIVO os erros da homologação (282→12, 286→16, 292→82,
+296→86, FUJI→FUX) e revelou a família de erro que a grade sintética não
+cobria: **pares de glifos fundidos que escapam das defesas**.
+
+Dump do motor (runs, DP, confianças TTA por glifo):
+
+- O par "28" funde num run de 10 px. O DP não divide porque `rw <= limiteL`
+  (1,75×mediana 6 = 10); o reparo do código não dispara porque exigia
+  `wd >= med0+3` (10 < 7,5+3). O run lê "X" 0,54-0,61 e o forçador de dígito
+  vira "1" — daí "12".
+- O corte correto c=5 lê "2" 0,94 + "8" 0,58 — mas o splitDig antigo exigia
+  conf >= 0,60 por pedaço e morria no 0,581.
+- Na banda do 444, "444" todo fundido (18 px) passava do limite e o DP
+  acertava — o buraco era só a janela 8-10 px.
+- "JI" fundido (8 px) na descrição lê "X" 0,72; os pedaços leem J 0,99 e
+  I 0,98.
+
+Correções aplicadas (v2.3.0): aceitação por PRODUTO de confianças com
+comparação contra a leitura do run inteiro (vence em ambos os sentidos:
+dígito real largo rejeita a divisão, fusão lê fraco e a divisão vence).
+Decisões 2 (tinta relativa) e 4 (histerese de espaço) seguem pendentes —
+miram os 120 vermelhos sintéticos, não observados em prints reais.

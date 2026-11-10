@@ -69,6 +69,31 @@ fundo azul (sem grade). Linhas inteiras corretas, incluindo espaços:
 | Tabela com linha azul, 23 px | 9/9 |
 | Tabela com linha azul, 21 px + desfoque | 9/9 |
 
+### v2.3.0 — pares de glifos fundidos (print real do hortifruti)
+
+Instrumentação do print real do hortifruti (uploads de 10/11) revelou a
+família de erro que faltava: na escala do ERP, pares de glifos adjacentes
+fundem num run só que ESCAPA das duas defesas existentes — o DP de
+segmentação (o par "28" funde num run de 10 px, exatamente no limite
+1,75×mediana=10) e o reparo do código (exigia largura >= mediana+3).
+Resultado: "282" era lido "12", "292" vira "82" e "FUJI" virava "FUX"
+("JI" fundido lia "X").
+
+Duas correções no motor (`ocr-comum.js`), rede e parser inalterados:
+
+- **Código (token 0)**: gatilho pela mediana dos OUTROS dígitos (não a do
+  código todo) e aceitação pelo PRODUTO das confianças TTA dígito-only dos
+  pedaços vs. a leitura do run inteiro — dígito real largo lê forte inteiro
+  (0,9+) e rejeita a divisão; par fundido lê fraco (0,12) e a divisão vence.
+- **Descrição**: glifo largo com leitura fraca (< 0,80) é redividido em duas
+  se AMBOS os pedaços leem [0-9A-Z] com conf >= 0,85 e o produto vence com
+  margem de 1,25×.
+
+Validação: print real 6/6 (282/286/292/296/318/444, com FUJI correto);
+grade sintética 0 regressões. O print virou caso de regressão permanente:
+`prints/hortifruti.png` → `bin-do-print.py` → `grade_real/` + gabarito em
+`tools/treino/esperado-real.json`. Spec: `docs/specs/2026-11-10-motor-ocr-design.md`.
+
 ### v2.2.1 — códigos de qualquer tamanho (1 a 8 dígitos)
 
 Print real de hortifruti com códigos de 3 e 4 dígitos devolvia só o produto

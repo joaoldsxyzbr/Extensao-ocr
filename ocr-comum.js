@@ -679,54 +679,116 @@
         if (!feito) break;
       }
 
-      // token 0 (código): glifo dígito mais largo que 1.3x a mediana dos
-      // dígitos é provavelmente um par fundido (74 -> 2); redivide com
-      // verificação dígito-only da rede
+      // token 0 (código): glifo dígito mais largo que ~1.45x a mediana DOS
+      // OUTROS dígitos do código (ou da linha, se o código tem 1 glifo só)
+      // é um par fundido que escapou do DP — na escala real do ERP o par
+      // "28" funde num run de 10px com limiteL=10 e lê "X" (digit-forced
+      // vira "1"). Redivide escolhendo o corte pelo PRODUTO das confianças
+      // TTA dígito-only dos pedaços e aceita só se o produto vencer a
+      // leitura do run inteiro com margem: um dígito REAL largo lê forte
+      // inteiro (0.9+) e o produto dos pedaços (~0.16) perde — fusão lê
+      // fraco (0.12) e o produto dos pedaços (0.55) vence.
       const confDig = (x0, x1) => {
-        const pdg = probasJanela(ink, w, y0, hband, x0, x1, false);
+        const pdg = probasJanela(ink, w, y0, hband, x0, x1, true);
         if (!pdg) return { ch: null, cc: 0.0 };
-        let k = 0;
-        for (let i = 1; i < DIG.length; i++) if (pdg[DIG[i]] > pdg[DIG[k]]) k = i;
-        return { ch: CHARS[DIG[k]], cc: pdg[DIG[k]] };
+        let k = -1;
+        for (const i of DIG) if (k < 0 || pdg[i] > pdg[k]) k = i;
+        return { ch: k < 0 ? null : CHARS[k], cc: k < 0 ? 0.0 : pdg[k] };
       };
       const splitDig = (x0, x1, depth) => {
         const wd = x1 - x0;
         if (wd < 5 || depth >= 6) return null;
-        let melhorC = -1, melhorCc = -1.0, melhorCh = null;
         const cmin = Math.max(2, Math.trunc(wd * 0.3));
         const cmax = Math.min(wd - 2, Math.trunc(wd * 0.7));
+        let melhor = null, melhorProd = -1.0;
         for (let c = cmin; c <= cmax; c++) {
-          const { ch, cc } = confDig(x0, x0 + c);
-          if (cc > melhorCc) { melhorCc = cc; melhorC = c; melhorCh = ch; }
+          const a = confDig(x0, x0 + c);
+          if (!a.ch || a.cc < 0.42) continue;
+          let resto = (x1 - (x0 + c)) >= 5 ? splitDig(x0 + c, x1, depth + 1) : null;
+          if (!resto) {
+            const b = confDig(x0 + c, x1);
+            if (!b.ch || b.cc < 0.42) continue;
+            resto = { partes: [{ ch: b.ch, cc: b.cc, run: [x0 + c, x1] }], prod: b.cc };
+          }
+          const prod = a.cc * resto.prod;
+          if (prod > melhorProd) {
+            melhorProd = prod;
+            melhor = [{ ch: a.ch, cc: a.cc, run: [x0, x0 + c] }].concat(resto.partes);
+          }
         }
-        if (melhorC < 0 || melhorCc < 0.6) return null;
-        let resto = splitDig(x0 + melhorC + 1, x1, depth + 1);
-        if (!resto) {
-          const { ch: ch2, cc: cc2 } = confDig(x0 + melhorC + 1, x1);
-          if (ch2 === null || cc2 < 0.6 || (x1 - (x0 + melhorC + 1)) < 2) return null;
-          resto = [[ch2, [x0 + melhorC + 1, x1]]];
-        }
-        return [[melhorCh, [x0, x0 + melhorC]]].concat(resto);
+        return melhor ? { partes: melhor, prod: melhorProd } : null;
       };
 
-      for (let round = 0; round < 2; round++) {
+      for (let round = 0; round < 3; round++) {
         const tts = tokensDe(glifos);
         if (!tts.length || !tts[0].length) break;
         const idx0 = tts[0];
         if (!idx0.every((i) => ehDigito(glifos[i].c))) break;
-        const larg = idx0.map((i) => glifos[i].rf[1] - glifos[i].rf[0]);
-        if (larg.length < 2) break;
-        const med0 = median(larg);
+        const largLine = glifos.filter((g) => g.c !== ' ').map((g) => g.rf[1] - g.rf[0]);
+        const medLine = largLine.length ? median(largLine) : 0;
         let alvo = -1;
         for (const i of idx0) {
           const wd = glifos[i].rf[1] - glifos[i].rf[0];
-          if (wd > 1.3 * med0 && wd >= med0 + 3) { alvo = i; break; }
+          const outros = idx0.filter((q) => q !== i).map((q) => glifos[q].rf[1] - glifos[q].rf[0]);
+          const ref = outros.length ? median(outros) : medLine;
+          if (ref > 0 && wd >= Math.max(1.45 * ref, ref + 2)) { alvo = i; break; }
         }
         if (alvo < 0) break;
-        const partes = splitDig(glifos[alvo].rf[0], glifos[alvo].rf[1], 0);
-        if (!partes) break;
-        const novos = partes.map(([ch, run]) => ({ c: ch, p: glifos[alvo].p, ti: 0, rf: run }));
+        const gA = glifos[alvo];
+        const sp = splitDig(gA.rf[0], gA.rf[1], 0);
+        if (!sp) break;
+        let digInt = 0;
+        for (const i of DIG) if (gA.p && gA.p[i] > digInt) digInt = gA.p[i];
+        if (sp.prod < 0.25 || sp.prod <= 1.35 * digInt) break;
+        const novos = sp.partes.map((q) => ({ c: q.ch, p: gA.p, ti: 0, rf: q.run }));
         glifos.splice(alvo, 1, ...novos);
+      }
+
+      // glifo fundido na DESCRIÇÃO (ti > 0): leitura fraca (< 0.80) num run
+      // largo demais para uma letra só (>= max(1.3x mediana da linha,
+      // mediana+2)) tenta dividir em duas leituras fortes — o par "JI"
+      // fundido do print real lia "X" 0.72; os pedaços leem J 0.99 e I 0.98.
+      // Aceita só se AMBOS os pedaços são [0-9A-Z] com conf >= 0.85 E o
+      // produto vencer a leitura inteira com margem de 1.25x: letra real
+      // grande lê forte inteira e o produto dos fragmentos não passa.
+      {
+        const largLine = glifos.filter((g) => g.c !== ' ').map((g) => g.rf[1] - g.rf[0]);
+        const medL = largLine.length ? median(largLine) : 0;
+        if (medL > 0) {
+          const minW = Math.max(1.3 * medL, medL + 2);
+          for (let j = 0; j < glifos.length; j++) {
+            const g = glifos[j];
+            if (g.c === ' ' || g.ti <= 0 || !g.p) continue;
+            const wd = g.rf[1] - g.rf[0];
+            if (wd < minW) continue;
+            const kc = CHARS.indexOf(g.c);
+            if (kc < 0 || g.p[kc] >= 0.80) continue;
+            const cmin = Math.max(2, Math.trunc(wd * 0.3));
+            const cmax = Math.min(wd - 2, Math.trunc(wd * 0.7));
+            let melhor = null, melhorProd = -1.0;
+            for (let c = cmin; c <= cmax; c++) {
+              const pa = probasJanela(ink, w, y0, hband, g.rf[0], g.rf[0] + c, true);
+              const pb = probasJanela(ink, w, y0, hband, g.rf[0] + c, g.rf[1], true);
+              if (!pa || !pb) continue;
+              let ka = 0; for (let i = 1; i < NCLS; i++) if (pa[i] > pa[ka]) ka = i;
+              let kb = 0; for (let i = 1; i < NCLS; i++) if (pb[i] > pb[kb]) kb = i;
+              if (!LEGIT.has(CHARS[ka]) || !LEGIT.has(CHARS[kb])) continue;
+              if (pa[ka] < 0.85 || pb[kb] < 0.85) continue;
+              const prod = pa[ka] * pb[kb];
+              if (prod > melhorProd) {
+                melhorProd = prod;
+                melhor = [pa, pb, ka, kb, [g.rf[0], g.rf[0] + c], [g.rf[0] + c, g.rf[1]]];
+              }
+            }
+            if (melhor && melhorProd > 1.25 * g.p[kc]) {
+              const [pa, pb, ka, kb, ra, rb] = melhor;
+              glifos.splice(j, 1,
+                { c: CHARS[ka], p: pa, ti: g.ti, rf: ra },
+                { c: CHARS[kb], p: pb, ti: g.ti, rf: rb });
+              j++; // o segundo glifo novo já foi avaliado como par
+            }
+          }
+        }
       }
 
       const txt = glifos.map((g) => g.c).join('').trim();
