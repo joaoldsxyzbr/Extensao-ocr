@@ -1,0 +1,1 @@
+calibracao 2026-11-11T16:16:05Z (push deste arquivo dispara o workflow Treino do OCR em modo calibrar)

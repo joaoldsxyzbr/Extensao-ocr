@@ -16,7 +16,16 @@ name: Treino do OCR
 # Artifacts sempre: rede nova, pesos e logs (gate.log, train.log, gen.log).
 # Fontes TTF sao baixadas no job (nao versionadas); validacao de tamanho e
 # de HTML pra pegar link quebrado.
+#
+# Disparo SEM Actions-write (ex.: conector MCP so com conteudo): faca um commit
+# que mexa em tools/treino/ACIONAR-CALIBRAR.txt — push nesse caminho roda a
+# CALIBRACAO (mesmo que um dispatch com calibrar=true). O valor do marcador
+# precisa mudar a cada disparo (timestamp).
 on:
+  push:
+    branches: [main]
+    paths:
+      - tools/treino/ACIONAR-CALIBRAR.txt
   workflow_dispatch:
     inputs:
       calibrar:
@@ -39,6 +48,10 @@ jobs:
   treino:
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    env:
+      # push do marcador = calibracao; dispatch usa os inputs
+      CALIBRAR: ${{ github.event_name == 'push' || inputs.calibrar == true }}
+      COMMITAR: ${{ inputs.commitar != false }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,7 +101,7 @@ jobs:
           python bin-do-print.py
 
       - name: Calibrar baseline (sem treinar)
-        if: ${{ inputs.calibrar }}
+        if: env.CALIBRAR == 'true'
         working-directory: tools/treino
         run: |
           set -o pipefail
@@ -107,7 +120,7 @@ jobs:
           EOF
 
       - name: Treinar rede nova
-        if: ${{ !inputs.calibrar }}
+        if: env.CALIBRAR != 'true'
         working-directory: tools/treino
         run: |
           set -o pipefail
@@ -116,7 +129,7 @@ jobs:
           cp rede-ocr-v2.2.js ../../rede-ocr.js
 
       - name: Gate de regressao (rede nova)
-        if: ${{ !inputs.calibrar }}
+        if: env.CALIBRAR != 'true'
         working-directory: tools/treino
         run: |
           set -o pipefail
@@ -138,7 +151,7 @@ jobs:
           retention-days: 14
 
       - name: Commitar baseline calibrado
-        if: ${{ inputs.calibrar && inputs.commitar }}
+        if: env.CALIBRAR == 'true' && env.COMMITAR == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -151,7 +164,7 @@ jobs:
           git push
 
       - name: Commitar rede nova
-        if: ${{ !inputs.calibrar && inputs.commitar }}
+        if: env.CALIBRAR != 'true' && env.COMMITAR == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
