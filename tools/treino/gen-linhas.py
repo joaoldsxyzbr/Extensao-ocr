@@ -231,7 +231,7 @@ def cmd_amostra():
         Image.fromarray(arr.astype(np.uint8)).save(out / f'linha-{i:02d}-{nome[:-4]}.png')
         widths.append(w)
         print(f'linha {i:02d} [{nome} {size}px] w={w:4d} label="{texto[:50]}"')
-    print(f'\n{HF} | larguras: min={min(widths)} max={max(widths)} '
+    print(f'\nHF={HF} | larguras: min={min(widths)} max={max(widths)} '
           f'media={sum(widths)/len(widths):.0f} | X esp. {HF}x{max(widths)} uint8')
     print(f'fontes disponiveis: {len(disponiveis)} de {len(FONTS)}')
 
