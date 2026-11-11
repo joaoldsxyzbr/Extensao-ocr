@@ -1,0 +1,37 @@
+name: Gate do OCR
+# Gate rapido em TODO push na main: sintaxe (node --check) de todo .js do
+# repo + suite do parser (tests/test-parser.js, 15/15). O gate pesado de
+# regressao da rede e o treino.yml (dispatch ou marcador de calibracao).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-ocr
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sintaxe de todo .js do repo (node --check)
+        run: |
+          set -e
+          git ls-files '*.js' > _js.txt
+          echo "Arquivos a checar:"
+          cat _js.txt
+          while IFS= read -r f; do
+            echo "--check: $f"
+            node --check "$f"
+          done < _js.txt
+
+      - name: Suite do parser (15/15)
+        run: node tests/test-parser.js
