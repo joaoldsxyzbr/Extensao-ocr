@@ -5,33 +5,37 @@ Branch: crnn-v3
 
 ## Tarefas
 
-### Tarefa 1: Gerador de linhas sintéticas (gen-linhas.py)
+### Tarefa 1: Gerador de linhas sinteticas (gen-linhas.py)
 
 - Arquivos: tools/treino/gen-linhas.py
-- Mudança: renderiza LINHAS inteiras (codigo + espacos + descricao em caixa
+- Mudanca: renderiza LINHAS inteiras (codigo + espacos + descricao em caixa
   alta, vocabulario dos prints reais do ERP + aleatorio nas 71 classes) nas
-  mesmas 13 variantes de fonte do gen.py, tamanhos 11-26px, gaps naturais a
-  colados, fundos branco/cinza/azul-claro, augment (blur, downscale/upscale
-  0.7-1.4x, jitter). Espelha o preprocessamento do motor: banda recortada,
-  ink = clip((1-gray-0.15)/0.7), redimensiona p/ altura fixa 32px preservando
-  proporcao, pad p/ bucket de largura (multiplo de 16). Saida: partes .npz
-  chunked por fonte + merge em dataset-linhas.npz (X float16 N x 32 x W,
-  larguras reais, labels por indice com blank reservado no 0). Modos:
-  '<ini>..<fim>' (chunk de fontes), 'merge', 'amostra' (24 PNGs + stats).
-- Verificacao: 'python gen-linhas.py amostra' com Carlito -> 24 PNGs
-  inspecionaveis, shapes e larguras coerentes; seed fixa = regeravel.
+  mesmas 13 variantes de fonte do gen.py, tamanhos 11-26px, layouts COLUNAR
+  (desc em coluna fixa, tipo Tirol) e CORRIDO (gap natural, tipo hortifruti),
+  fundos branco/cinza/azul-claro, texto claro em 1/6 (casos duros), augment
+  (blur, AA-mush, noise, jitter). Espelha o preprocessamento do motor: banda
+  recortada, ink = clip((1-gray-0.15)/0.7), redimensiona p/ altura fixa 32px
+  preservando proporcao, pad p/ largura do chunk. Saida: partes .npz chunked
+  por fonte (X uint8 N x 32 x W, larguras, labels com 0=blank, texto ASCII) +
+  merge em dataset-linhas.npz. Modos: '<ini>..<fim>' (chunk de fontes),
+  'merge', 'amostra' (24 PNGs + stats). Guarda: linha so entra se todo char do
+  texto e classe (round-trip label<->texto verificado 479/479 local).
+- Verificacao: 'python gen-linhas.py amostra' -> 24 PNGs inspecionaveis,
+  shapes e larguras coerentes; seed fixa = regeravel.
 - Criterio de pronto: dataset completo gera sem erro; PNG de amostra legivel.
+- STATUS: CONCLUIDA 11/11 (blob 5885dec1 na crnn-v3, byte-exato).
 
 ### Tarefa 2: Treino CRNN em PyTorch (treino-crnn.py)
 
 - Arquivos: tools/treino/treino-crnn.py
 - Mudanca: modelo Conv(1->32,s1)->Conv(32->64,s2)->Conv(64->64,s1)->
-  Conv(64->96,s2) -> BiLSTM(96) x2 -> Linear -> 72 classes (71 chars + blank
-  no 0); alvo <= 600k params. CTCLoss do torch, Adam, batches por bucket de
-  largura, seed fixa. Flags: --epocas, --n (subamostra), --peso-entrada.
-  Saida: pesos-crnn.pt + log de custo/epoca + CER de validacao.
-- Verificacao: rodada local com --epocas 1 --n 2000 -> loss cai e CER val
-  < 5%; tempo/linha medido e projetado p/ dataset cheio no runner.
+  Conv(64->96,s2) -> BiLSTM(96) x2 -> Linear -> 73 classes (71 chars +
+  ESPACO + blank no 0; decisao 11 da spec); alvo <= 600k params. CTCLoss do
+  torch, Adam, batches por largura (sort por L, crop ao max do batch), seed
+  fixa. Flags: --epocas, --n (subamostra), --dataset. Saida:
+  pesos-crnn.pt + log de custo/epoca + CER de validacao.
+- Verificacao: rodada no runner com --epocas 1 --n reduzido -> loss cai e
+  tempo/epoca medido e projetado p/ dataset cheio dentro do limite.
 - Criterio de pronto: custo por epoca estimado dentro do limite do runner.
 
 ### Tarefa 3: Exportador de pesos (exporta-crnn.py)
@@ -81,7 +85,7 @@ Branch: crnn-v3
 - Arquivos: ocr-comum.js, manifest.json, README.md, popup/ui se preciso.
 - Mudanca: leitura vira banda -> CRNN -> CTC decode; segmentacao/DP/TTA/
   splitDig removidos; rede-ocr.js (MLP) sai da extensao; manifest 3.0.0.
-- Verificacao: gate comparativo verde + parser 15/15 + node --check +Release
+- Verificacao: gate comparativo verde + parser 15/15 + node --check + Release
   ZIP v3.0.0 + homologacao do Joao com prints reais no Chrome.
 - Criterio de pronto: Joao valida no Chrome com print FULL do hortifruti.
 

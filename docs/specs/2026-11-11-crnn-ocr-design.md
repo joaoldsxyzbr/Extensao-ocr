@@ -27,6 +27,7 @@ uma vez, sem cortar glifo e sem limiar de espaco.
 | 8 | Pesos exportados em TEXTO (rede-crnn.js, linhas de 100 valores com virgula no fim de cada linha) | binario | limites do conector/sandbox e antivírus |
 | 9 | Decode CTC em JS: greedy primeiro | beam search | greedy costuma bastar p/ caixa alta espaçada; beam entra so se um caso real mostrar falta |
 | 10 | Pipeline novo em tools/treino/ (gen-linhas.py, train-crnn.py, exporta-crnn.py, paridade-crnn.py) + job proprio treino-crnn.yml | esticar gen.py/train.py | entrada, batch e custo de treino sao outro mundo |
+| 11 | ESPACO E CLASSE EXPLICITA: 73 saidas (71 chars + espaco + blank no 0) | 72 saidas sem classe de espaco | CTC so emite o que e classe — sem classe de espaco as palavras colam. Descoberto na tarefa 1 pelo guarda de round-trip do label (11/11) |
 
 ## Comportamento esperado
 
