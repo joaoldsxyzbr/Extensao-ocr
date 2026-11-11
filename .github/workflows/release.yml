@@ -1,0 +1,59 @@
+name: Release ZIP
+# Empacota a extensao em extensao-ocr-v<versao do manifest>.zip (so arquivos
+# da extensao: sem tools/, tests/, docs/, prints/, .github/) e publica na
+# release v<versao>. Repo 100% texto — ZIP sem binario/wasm passa no antivirus.
+#
+# Disparos:
+#   - dispatch manual na aba Actions (Run workflow)
+#   - push mexendo em tools/ACIONAR-RELEASE.txt (marcador p/ disparo sem
+#     Actions-write; o valor do arquivo precisa mudar a cada disparo)
+# A release v<versao> e criada se nao existir; o ZIP sempre e reenviado
+# (clobber), entao rodar de novo atualiza o ZIP da versao corrente.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/ACIONAR-RELEASE.txt
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-ocr
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versao do manifest.json
+        run: |
+          VER=$(node -p "require('./manifest.json').version")
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "Versao da extensao: $VER"
+
+      - name: Empacotar extensao (so arquivos da extensao)
+        run: |
+          zip -r "extensao-ocr-v$VER.zip" . \
+            -x '.git/*' -x '.github/*' -x 'tools/*' -x 'tests/*' \
+            -x 'docs/*' -x 'prints/*' -x '.gitignore'
+          echo "--- conteudo do ZIP:"
+          unzip -l "extensao-ocr-v$VER.zip"
+
+      - name: Publicar release v$VER (cria se nao existir)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$VER"
+          ZIP="extensao-ocr-v$VER.zip"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG ja existe - reenviando o ZIP."
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$ZIP" --title "Extensao OCR $VER" --generate-notes
+          fi
