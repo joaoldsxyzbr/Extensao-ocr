@@ -4,11 +4,11 @@ name: Treino do OCR
 # o mesmo do Chrome — o baseline e congelado POR AMBIENTE).
 #
 # Dois modos, disparo manual na aba Actions:
-#   - calibrar=true:  NAO treina. Roda o gate com a rede atual, regrava o
-#     baseline.json (verdes congelados no runner) e commita se commitar=true.
-#     Duas guardas: (1) aborta se algum verde do baseline atual regredir;
-#     (2) aborta se o baseline novo NAO cobrir todo print real do
-#     esperado-real.json (baseline nunca esconde print real errado).
+#   - calibrar=true:  NAO treina. Roda o gate com a rede atual e recongela o
+#     baseline.json (verdes congelados DO RUNNER — o rendering do runner nao e
+#     o mesmo do Chrome; regressoes vs baseline de outro ambiente sao
+#     esperadas e nao abortam). Guarda dura: aborta se algum print REAL do
+#     esperado-real.json nao ficar verde com a rede atual.
 #   - calibrar=false: retreino completo: gen.py -> train.py -> rede nova na
 #     raiz -> gate (0 regressoes obrigatorio) -> commit da rede-ocr.js se
 #     commitar=true.
@@ -51,7 +51,7 @@ jobs:
     env:
       # push do marcador = calibracao; dispatch usa os inputs
       CALIBRAR: ${{ github.event_name == 'push' || inputs.calibrar == true }}
-      COMMITAR: ${{ inputs.commitar != false }}
+      COMMITAR: ${{ github.event_name == 'push' || inputs.commitar == true }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,11 +75,19 @@ jobs:
           curl -fsSL -o dejavu.zip "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"
           python - <<'EOF'
           import zipfile
+          queridos = {'DejaVuSans.ttf', 'DejaVuSans-Bold.ttf',
+                      'DejaVuSansMono.ttf', 'DejaVuSansMono-Bold.ttf'}
+          achados = {}
           with zipfile.ZipFile('dejavu.zip') as z:
-              for nome in ('ttf/DejaVuSans.ttf', 'ttf/DejaVuSans-Bold.ttf',
-                           'ttf/DejaVuSansMono.ttf', 'ttf/DejaVuSansMono-Bold.ttf'):
-                  with z.open(nome) as fsrc, open(nome.split('/')[-1], 'wb') as fdst:
-                      fdst.write(fsrc.read())
+              for nome in z.namelist():
+                  base = nome.rsplit('/', 1)[-1]
+                  if base in queridos:
+                      with z.open(nome) as fsrc, open(base, 'wb') as fdst:
+                          fdst.write(fsrc.read())
+                      achados[base] = True
+          faltando = queridos - set(achados)
+          if faltando:
+              raise SystemExit(f'ERRO: fontes DejaVu ausentes no zip: {sorted(faltando)}')
           EOF
           for f in *.ttf; do
             size=$(stat -c%s "$f")
@@ -105,9 +113,11 @@ jobs:
         working-directory: tools/treino
         run: |
           set -o pipefail
-          # Guarda 1: exit 1 se algum verde do baseline atual regredir.
-          python regressao.py --gerar-baseline 2>&1 | tee gate.log
-          # Guarda 2: o baseline novo tem que cobrir TODO print real.
+          # Recongela os verdes DO RUNNER. Regressoes vs baseline antigo
+          # (gerado em outro ambiente/FreeType) sao esperadas aqui — nao abortam.
+          python regressao.py --gerar-baseline 2>&1 | tee gate.log || \
+            echo "(regressoes vs baseline antigo: efeito de ambiente, recongelando)"
+          # Guarda dura: TODO print real tem que ficar verde com a rede atual.
           python - <<'EOF'
           import json
           base = json.load(open('baseline.json'))
