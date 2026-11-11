@@ -1,25 +1,10 @@
 {
- "modelo": "v2.2.0",
+ "modelo": "gerado por regressao.py --gerar-baseline",
  "verdes": [
-  "14az",
-  "14br",
-  "16az",
-  "16br",
-  "18az",
-  "18br",
-  "19az",
-  "19br",
-  "20az",
-  "20br",
-  "ca18_g0.0_c30",
-  "ca19_nat",
-  "ca21_nat",
   "ca22_g0.0_c30",
   "ca22_g0.0_c80",
-  "ca23_nat",
-  "ca25_nat",
-  "s16_g0.0_w500",
-  "s16_g0.25_w400",
-  "s16_g0.75_w400"
+  "hortifruti",
+  "s16_g0.0",
+  "s16_g0.0_w400"
  ]
 }
