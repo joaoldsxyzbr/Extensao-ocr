@@ -1,0 +1,164 @@
+name: Treino do OCR
+# Treina a rede do OCR proprio no CI e roda o GATE de regressao. Tambem
+# calibra o baseline dos verdes no ambiente do CI (rendering do runner nao e
+# o mesmo do Chrome — o baseline e congelado POR AMBIENTE).
+#
+# Dois modos, disparo manual na aba Actions:
+#   - calibrar=true:  NAO treina. Roda o gate com a rede atual, regrava o
+#     baseline.json (verdes congelados no runner) e commita se commitar=true.
+#     Duas guardas: (1) aborta se algum verde do baseline atual regredir;
+#     (2) aborta se o baseline novo NAO cobrir todo print real do
+#     esperado-real.json (baseline nunca esconde print real errado).
+#   - calibrar=false: retreino completo: gen.py -> train.py -> rede nova na
+#     raiz -> gate (0 regressoes obrigatorio) -> commit da rede-ocr.js se
+#     commitar=true.
+#
+# Artifacts sempre: rede nova, pesos e logs (gate.log, train.log, gen.log).
+# Fontes TTF sao baixadas no job (nao versionadas); validacao de tamanho e
+# de HTML pra pegar link quebrado.
+on:
+  workflow_dispatch:
+    inputs:
+      calibrar:
+        description: 'Soh regravar o baseline (sem treinar)'
+        type: boolean
+        default: false
+      commitar:
+        description: 'Commitar o resultado (baseline ou rede nova) se o gate passar'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: treino-ocr
+  cancel-in-progress: false
+
+jobs:
+  treino:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar deps do pipeline
+        run: pip install numpy scipy pillow
+
+      - name: Baixar fontes TTF (10 arquivos)
+        working-directory: tools/treino
+        run: |
+          mkdir -p fonts
+          cd fonts
+          curl -fsSL -o Arimo.ttf "https://github.com/google/fonts/raw/main/ofl/arimo/Arimo%5Bwght%5D.ttf"
+          curl -fsSL -o Carlito-Regular.ttf "https://github.com/google/fonts/raw/main/ofl/carlito/Carlito-Regular.ttf"
+          curl -fsSL -o Carlito-Bold.ttf "https://github.com/google/fonts/raw/main/ofl/carlito/Carlito-Bold.ttf"
+          curl -fsSL -o Roboto-Regular.ttf "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
+          curl -fsSL -o Roboto-Bold.ttf "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf"
+          curl -fsSL -o dejavu.zip "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"
+          python - <<'EOF'
+          import zipfile
+          with zipfile.ZipFile('dejavu.zip') as z:
+              for nome in ('ttf/DejaVuSans.ttf', 'ttf/DejaVuSans-Bold.ttf',
+                           'ttf/DejaVuSansMono.ttf', 'ttf/DejaVuSansMono-Bold.ttf'):
+                  with z.open(nome) as fsrc, open(nome.split('/')[-1], 'wb') as fdst:
+                      fdst.write(fsrc.read())
+          EOF
+          for f in *.ttf; do
+            size=$(stat -c%s "$f")
+            if [ "$size" -lt 50000 ]; then
+              echo "ERRO: $f com $size bytes (TTF real tem >100k) - provavelmente pagina de erro"
+              exit 1
+            fi
+            if head -c 200 "$f" | grep -qi '<html'; then
+              echo "ERRO: $f parece HTML, nao TTF"
+              exit 1
+            fi
+            echo "$f: $size bytes"
+          done
+
+      - name: Grade sintetica + bins dos prints reais
+        working-directory: tools/treino
+        run: |
+          python gera-grade.py
+          python bin-do-print.py
+
+      - name: Calibrar baseline (sem treinar)
+        if: ${{ inputs.calibrar }}
+        working-directory: tools/treino
+        run: |
+          set -o pipefail
+          # Guarda 1: exit 1 se algum verde do baseline atual regredir.
+          python regressao.py --gerar-baseline 2>&1 | tee gate.log
+          # Guarda 2: o baseline novo tem que cobrir TODO print real.
+          python - <<'EOF'
+          import json
+          base = json.load(open('baseline.json'))
+          reais = set(json.load(open('esperado-real.json')))
+          faltando = reais - set(base['verdes'])
+          if faltando:
+              print('ERRO: print real fora do baseline:', sorted(faltando))
+              raise SystemExit(1)
+          print('baseline cobre todos os prints reais:', sorted(reais))
+          EOF
+
+      - name: Treinar rede nova
+        if: ${{ !inputs.calibrar }}
+        working-directory: tools/treino
+        run: |
+          set -o pipefail
+          python gen.py 2>&1 | tee gen.log
+          python train.py 2>&1 | tee train.log
+          cp rede-ocr-v2.2.js ../../rede-ocr.js
+
+      - name: Gate de regressao (rede nova)
+        if: ${{ !inputs.calibrar }}
+        working-directory: tools/treino
+        run: |
+          set -o pipefail
+          python regressao.py 2>&1 | tee gate.log
+          # exit real do python (tee engole o rc sem pipefail)
+
+      - name: Artifacts (rede nova, pesos, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: treino-ocr-${{ github.run_id }}
+          path: |
+            tools/treino/rede-ocr-v2.2.js
+            tools/treino/pesos-treino.npz
+            tools/treino/gate.log
+            tools/treino/train.log
+            tools/treino/gen.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Commitar baseline calibrado
+        if: ${{ inputs.calibrar && inputs.commitar }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/treino/baseline.json
+          if git diff --cached --quiet; then
+            echo "Baseline ja estava calibrado - nada a commitar."
+            exit 0
+          fi
+          git commit -m "Calibra baseline de regressao no runner do CI (verdes congelados)"
+          git push
+
+      - name: Commitar rede nova
+        if: ${{ !inputs.calibrar && inputs.commitar }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rede-ocr.js
+          if git diff --cached --quiet; then
+            echo "Rede nova identica a atual (gate verde) - nada a commitar."
+            exit 0
+          fi
+          git commit -m "Retreina rede do OCR via CI: gate de regressao verde (0 regressoes)"
+          git push
